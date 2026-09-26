@@ -1,0 +1,33 @@
+name: Diagnose VC runtime extraction
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - run: brew install cabextract
+      - name: Compare extraction and inspect candidates
+        shell: bash
+        run: |
+          set -uo pipefail
+          curl --fail --location --retry 3 \
+            https://raw.githubusercontent.com/Notbood/Madeira-IPA/main/tools/fetch-vcruntime.sh \
+            -o "$RUNNER_TEMP/notbood-fetch-vcruntime.sh"
+          echo '=== Notbood extractor ==='
+          bash "$RUNNER_TEMP/notbood-fetch-vcruntime.sh"
+          echo "Notbood status: $?"
+          echo '=== This fork extractor ==='
+          bash tools/fetch-vcruntime.sh
+          echo "This fork status: $?"
+          echo '=== Files selected ==='
+          find app/Madeira/x86_64-vcruntime -type f -maxdepth 1 -print | sort
+          echo '=== PE verification ==='
+          python3 tools/verify-vcruntime.py --dest app/Madeira/x86_64-vcruntime
