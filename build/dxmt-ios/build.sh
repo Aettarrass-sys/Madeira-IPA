@@ -101,6 +101,7 @@ if [[ -f "$BUILD_DIR/../madeira-d3d12/deps.sh" && \
     compile_cxx "$REPO_ROOT/research/madeira-d3d12/src/unix/madeira_ags.cpp" madeira_ags
 else
     echo "=== madeira-d3d12 canary SKIPPED (converter package not resolvable) ==="
+    compile_objc "$BUILD_DIR/madeira_converter_unavailable.c" madeira_converter_unavailable
 fi
 
 echo "=== winemetal unix (Objective-C) ==="
