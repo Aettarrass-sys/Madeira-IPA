@@ -55,15 +55,26 @@ def patch_llvm(root: Path) -> None:
     cmake.write_text(content[:start] + block + content[end:])
 
 
+def patch_wine(root: Path) -> None:
+    sync = root / "dlls/ntdll/unix/sync.c"
+    old = '''#include "../../../../build/madeira_cfg.h"   /* ml1122: before the Wine headers, which ban strncpy by macro */
+#include "config.h"'''
+    new = '''#include "config.h"
+#include "../../../../build/madeira_cfg.h"   /* ml1122: before Wine API headers, which ban strncpy by macro */'''
+    replace_once(sync, old, new)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("kind", choices=("fex", "llvm"))
+    parser.add_argument("kind", choices=("fex", "llvm", "wine"))
     parser.add_argument("root", type=Path)
     args = parser.parse_args()
     if args.kind == "fex":
         patch_fex(args.root)
-    else:
+    elif args.kind == "llvm":
         patch_llvm(args.root)
+    else:
+        patch_wine(args.root)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,10 @@ its Git tree. Wine's dependency scanner requires that path even to generate
 headers. CI supplies an empty scanner sentinel and does not build PE ntdll;
 the app bundles its tracked PE ntdll. Rebuilding Wine's PE ntdll from source
 requires the upstream fork to provide the real missing implementation.
+The same Wine revision puts Madeira's configuration header before Wine's
+required first `config.h` include in `unix/sync.c`. CI swaps those two includes
+in its checkout so Wine's dependency scanner can create the Makefile. The
+configuration header still precedes the Wine API headers that ban `strncpy`.
 
 Download the IPA artifact from the completed run and install it with
 SideStore. SideStore applies the Apple developer signature, so its installed

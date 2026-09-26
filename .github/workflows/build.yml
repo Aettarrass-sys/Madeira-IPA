@@ -160,6 +160,7 @@ jobs:
           test ! -e "$missing"
           grep -Fq '#include "arm64ec_x64_export_iat.c"' wine/dlls/ntdll/loader.c
           printf '%s\n' '/* CI sentinel for Wine makedep; PE ntdll is not built here. */' > "$missing"
+          python3 tools/patch-build-sources.py wine wine
           mkdir -p wine/build-arm64ec wine/build-macos
           (cd wine/build-arm64ec && ../configure --enable-archs=arm64ec --without-x --disable-tests)
           make -C wine/build-arm64ec -j"$(sysctl -n hw.ncpu)" \
