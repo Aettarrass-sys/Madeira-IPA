@@ -277,12 +277,22 @@ jobs:
             -DTUNE_CPU=generic -DTUNE_ARCH=generic
           cmake --build FEX/build-ios --target FEXCore FEXCore_Base \
             --parallel "$(sysctl -n hw.ncpu)"
+          for lib in FEX/build-ios/FEXCore/Source/lib{FEXCore,FEXCore_Base,JemallocLibs}.a \
+            FEX/build-ios/External/fmt/libfmt.a \
+            FEX/build-ios/External/cephes/libcephes_128bit.a \
+            FEX/build-ios/External/xxhash/cmake_unofficial/libxxhash.a \
+            FEX/build-ios/External/SoftFloat-3e/libsoftfloat_3e.a; do
+            test -s "$lib" || { echo "Missing FEX linker input: $lib" >&2; exit 1; }
+          done
 
       - name: Build DXMT iOS static library
         if: steps.native-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          xcodebuild -downloadComponent MetalToolchain
+          if ! xcodebuild -downloadComponent MetalToolchain; then
+            echo "MetalToolchain download returned a failure; checking the compiler directly"
+          fi
+          xcrun -sdk macosx --find metal
           mkdir -p build/dxmt-ios/shader-headers
           for name in air_msad air_samplepos air_tessellation; do
             xcrun -sdk macosx metal -o "build/dxmt-ios/shader-headers/$name.air" \
@@ -291,7 +301,16 @@ jobs:
             xxd -n "$name" -i "build/dxmt-ios/shader-headers/$name.air" \
               "build/dxmt-ios/shader-headers/$name.h"
           done
-          bash build/dxmt-ios/build.sh
+          if ! bash build/dxmt-ios/build.sh; then
+            for error_file in build/dxmt-ios/obj/*.err; do
+              [[ -f "$error_file" ]] || continue
+              if grep -q 'error:' "$error_file"; then
+                echo "=== $error_file ==="
+                sed -n '1,50p' "$error_file"
+              fi
+            done
+            exit 1
+          fi
           shopt -s nullglob
           objects=(build/dxmt-ios/obj/*.o)
           llvm_libs=(toolchains/llvm-ios-build/lib/*.a)
