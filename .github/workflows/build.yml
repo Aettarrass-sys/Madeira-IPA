@@ -282,7 +282,7 @@ jobs:
             src/d3d11/d3d11.dll src/dxgi/dxgi.dll \
             src/winemetal/winemetal.dll src/d3d10/d3d10core.dll
           python3 tools/verify-dxmt-command.py \
-            research/dxmt/build-arm64ec/src/dxmt/dxmt_command.metallib \
+            research/dxmt/build-arm64ec/src/dxmt/libdxmt.a.p/dxmt_command.metallib \
             research/dxmt/build-arm64ec/src/d3d11/d3d11.dll
           for name in d3d11 dxgi winemetal d3d10core; do
             source="$(find research/dxmt/build-arm64ec/src -maxdepth 2 -name "$name.dll" -print -quit)"
