@@ -379,11 +379,17 @@ jobs:
           set -euo pipefail
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/Madeira.app
+          # Debug builds load the app code from this dylib at launch. Sign it
+          # before the enclosing bundle so SideStore receives valid nested code.
+          test -s Payload/Madeira.app/Madeira.debug.dylib
+          codesign --force --sign - --timestamp=none \
+            Payload/Madeira.app/Madeira.debug.dylib
           codesign --force --sign - --timestamp=none \
             Payload/Madeira.app/d3d12/libmetalirconverter.dylib
           codesign --force --sign - --timestamp=none \
             --entitlements app/Madeira/Madeira.entitlements Payload/Madeira.app
           codesign --verify --strict --verbose=2 Payload/Madeira.app/d3d12/libmetalirconverter.dylib
+          codesign --verify --strict --verbose=2 Payload/Madeira.app/Madeira.debug.dylib
           codesign --verify --strict --verbose=2 Payload/Madeira.app
           codesign -d --entitlements :- Payload/Madeira.app > "$RUNNER_TEMP/entitlements.plist" 2>/dev/null
           /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.kernel.extended-virtual-addressing' \

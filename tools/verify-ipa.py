@@ -29,6 +29,24 @@ def pe_machine(data: bytes) -> int:
     return struct.unpack_from("<H", data, offset + 4)[0]
 
 
+def has_macho_signature(data: bytes) -> bool:
+    if len(data) < 32 or struct.unpack_from("<I", data)[0] != 0xFEEDFACF:
+        return False
+    command_count = struct.unpack_from("<I", data, 16)[0]
+    offset = 32
+    for _ in range(command_count):
+        if offset + 8 > len(data):
+            return False
+        command, size = struct.unpack_from("<II", data, offset)
+        if size < 8 or offset + size > len(data):
+            return False
+        if command == 0x1D and size >= 16:
+            signature_offset, signature_size = struct.unpack_from("<II", data, offset + 8)
+            return signature_size > 0 and signature_offset + signature_size <= len(data)
+        offset += size
+    return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("ipa", type=pathlib.Path)
@@ -49,6 +67,13 @@ def main() -> int:
         exe_name = "Payload/Madeira.app/Madeira"
         if info_name not in names or exe_name not in names:
             raise SystemExit("IPA is missing Madeira.app Info.plist or executable")
+        for code_name in (
+            exe_name,
+            "Payload/Madeira.app/Madeira.debug.dylib",
+            "Payload/Madeira.app/d3d12/libmetalirconverter.dylib",
+        ):
+            if code_name not in names or not has_macho_signature(archive.read(code_name)):
+                raise SystemExit(f"Missing Mach-O code signature: {code_name}")
         info = plistlib.loads(archive.read(info_name))
         if info.get("CFBundleIdentifier") != args.bundle_id:
             raise SystemExit(f"Wrong Bundle ID: {info.get('CFBundleIdentifier')}")
