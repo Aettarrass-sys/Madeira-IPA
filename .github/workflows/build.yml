@@ -252,6 +252,33 @@ jobs:
             build/gnutls-ios/obj
           key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py') }}-xcode26.6-v4
 
+      - name: Rebuild DXMT PE DLLs with iOS 18 Metal shaders
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
+          # DXMT links against Wine's ARM64EC import and CRT archives.
+          make -C wine/build-arm64ec -j"$(sysctl -n hw.ncpu)" \
+            tools/winebuild libs/winecrt0 dlls/ntdll dlls/dbghelp
+          python3 tools/patch-dxmt-metal.py research/dxmt
+          ln -s ../../toolchains research/dxmt/toolchains
+          SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" \
+            meson setup research/dxmt/build-arm64ec research/dxmt \
+              --cross-file research/dxmt/build-arm64ec-win.txt \
+              --native-file research/dxmt/build-osx.txt \
+              -Dbuildtype=release \
+              -Dwine_build_path="$GITHUB_WORKSPACE/wine/build-arm64ec"
+          ninja -C research/dxmt/build-arm64ec \
+            src/d3d11/d3d11.dll src/dxgi/dxgi.dll \
+            src/winemetal/winemetal.dll src/d3d10/d3d10core.dll
+          python3 tools/verify-dxmt-command.py \
+            research/dxmt/build-arm64ec/src/dxmt/dxmt_command.metallib \
+            research/dxmt/build-arm64ec/src/d3d11/d3d11.dll
+          for name in d3d11 dxgi winemetal d3d10core; do
+            source="$(find research/dxmt/build-arm64ec/src -maxdepth 2 -name "$name.dll" -print -quit)"
+            test -n "$source" && test -s "$source"
+            cp "$source" "app/Madeira/arm64ec-windows/$name.dll"
+          done
+
       - name: Build Wine iOS static libraries
         if: steps.native-cache.outputs.cache-hit != 'true'
         run: |
@@ -294,12 +321,12 @@ jobs:
           if ! xcodebuild -downloadComponent MetalToolchain; then
             echo "MetalToolchain download returned a failure; checking the compiler directly"
           fi
-          xcrun -sdk macosx --find metal
+          xcrun -sdk iphoneos --find metal
           mkdir -p build/dxmt-ios/shader-headers
           for name in air_msad air_samplepos air_tessellation; do
-            xcrun -sdk macosx metal -o "build/dxmt-ios/shader-headers/$name.air" \
+            xcrun -sdk iphoneos metal -o "build/dxmt-ios/shader-headers/$name.air" \
               -c "research/dxmt/src/airconv/shaders/$name.metal" \
-              -std=metal3.1 --target=air64-apple-macos14.0
+              -std=metal3.1 --target=air64-apple-ios18.0
             xxd -n "$name" -i "build/dxmt-ios/shader-headers/$name.air" \
               "build/dxmt-ios/shader-headers/$name.h"
           done
