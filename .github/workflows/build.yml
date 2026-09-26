@@ -256,6 +256,8 @@ jobs:
         if: steps.native-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
+          command -v aarch64-w64-mingw32-clang
           bash build/ntdll-unix/build.sh
           bash build/win32u-unix/build.sh
           bash tools/build-wineserver-ios.sh
