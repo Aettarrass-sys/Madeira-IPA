@@ -14,6 +14,12 @@ license files, checks the prefix template and converter dylib, then builds,
 ad hoc signs, and verifies the IPA. A failed prerequisite or check stops the
 workflow rather than uploading an incomplete IPA.
 
+The pinned Wine fork references an `arm64ec_x64_export_iat.c` file absent from
+its Git tree. Wine's dependency scanner requires that path even to generate
+headers. CI supplies an empty scanner sentinel and does not build PE ntdll;
+the app bundles its tracked PE ntdll. Rebuilding Wine's PE ntdll from source
+requires the upstream fork to provide the real missing implementation.
+
 Download the IPA artifact from the completed run and install it with
 SideStore. SideStore applies the Apple developer signature, so its installed
 bundle ID and entitlements must be checked on the phone. The build requests

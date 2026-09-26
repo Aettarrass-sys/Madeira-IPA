@@ -152,9 +152,16 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
+          # The pinned Wine commit references this untracked PE-only .c file.
+          # Wine's makedep scans it during configure even though this workflow
+          # uses the already tracked PE DLLs. An empty sentinel lets header
+          # generation proceed; do not compile Wine's ARM64EC ntdll from it.
+          missing=wine/dlls/ntdll/arm64ec_x64_export_iat.c
+          test ! -e "$missing"
+          grep -Fq '#include "arm64ec_x64_export_iat.c"' wine/dlls/ntdll/loader.c
+          printf '%s\n' '/* CI sentinel for Wine makedep; PE ntdll is not built here. */' > "$missing"
           mkdir -p wine/build-arm64ec wine/build-macos
           (cd wine/build-arm64ec && ../configure --enable-archs=arm64ec --without-x --disable-tests)
-          make -C wine/build-arm64ec -j"$(sysctl -n hw.ncpu)" dlls/ntdll
           make -C wine/build-arm64ec -j"$(sysctl -n hw.ncpu)" \
             include/dwrite.h include/dwrite_3.h
           test -s wine/build-arm64ec/include/dwrite.h
