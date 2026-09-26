@@ -506,27 +506,69 @@ enum StikJITHelper {
         // now needs. The alias has no placement requirement of its own (FEX
         // derives WriteOffset from the real distance), so send it high, where it
         // lived in every run before ml977, and keep the scarce low gap for RX.
-        rwAddr = 0x7000000000
-        let kr1 = vm_remap(
-            mach_task_self_,
-            &rwAddr,
-            vm_size_t(poolSize),
-            0,
-            VM_FLAGS_ANYWHERE,
-            mach_task_self_,
-            vm_address_t(bitPattern: rxPtr),
-            0, // copy = false
-            &curProt,
-            &maxProt,
-            VM_INHERIT_NONE
-        )
+        func remapRW(at address: vm_address_t, flags: Int32) -> (kern_return_t, vm_address_t) {
+            var target = address
+            let kr = vm_remap(mach_task_self_, &target, vm_size_t(poolSize), 0, flags,
+                              mach_task_self_, rxAddrV, 0, &curProt, &maxProt, VM_INHERIT_NONE)
+            return (kr, target)
+        }
 
-        guard kr1 == KERN_SUCCESS else {
-            LogStore.shared.log("vm_remap failed: \(kr1)", level: .error)
+        // The high ANYWHERE request returned KERN_NO_SPACE in the iPhone 14,3
+        // logs while a large free run was reported immediately after RX.
+        // Try that precise, non-overwriting address before giving up. Do not
+        // use the executable window for the alias, even when its reservation
+        // failed earlier in this launch.
+        let highHint: vm_address_t = 0x7000000000
+        let (highKr, highAddr) = remapRW(at: highHint, flags: VM_FLAGS_ANYWHERE)
+        if highKr == KERN_SUCCESS {
+            rwAddr = highAddr
+        } else {
+            LogStore.shared.log("RW vm_remap high hint 0x7000000000 failed kr=\(highKr)", level: .error)
+            let adjacent = rxAddrV + vm_address_t(poolSize)
+            if adjacent + vm_address_t(poolSize) <= vm_address_t(guestLo)
+                && !overlapsExeWindow(adjacent, vm_address_t(poolSize)) {
+                let (fixedKr, fixedAddr) = remapRW(at: adjacent, flags: 0 /* VM_FLAGS_FIXED */)
+                if fixedKr == KERN_SUCCESS && fixedAddr == adjacent {
+                    rwAddr = fixedAddr
+                    LogStore.shared.log(String(format: "RW alias placed adjacent to RX at 0x%lx after high-hint failure", Int(rwAddr)), level: .success)
+                } else {
+                    if fixedKr == KERN_SUCCESS { vm_deallocate(mach_task_self_, fixedAddr, vm_size_t(poolSize)) }
+                    LogStore.shared.log(String(format: "RW vm_remap adjacent 0x%lx failed kr=%d result=0x%lx",
+                                                       Int(adjacent), fixedKr, Int(fixedAddr)), level: .error)
+                }
+            } else {
+                LogStore.shared.log("RW adjacent candidate would overlap a protected address range", level: .error)
+            }
+        }
+
+        if rwAddr == 0 {
+            func logVMRegion(_ label: String, at query: vm_address_t) {
+                var addr = query
+                var size: vm_size_t = 0
+                var info = vm_region_basic_info_data_64_t()
+                var count = mach_msg_type_number_t(MemoryLayout<vm_region_basic_info_data_64_t>.size / MemoryLayout<Int32>.size)
+                var object: mach_port_t = 0
+                let kr = withUnsafeMutablePointer(to: &info) {
+                    $0.withMemoryRebound(to: Int32.self, capacity: Int(count)) {
+                        vm_region_64(mach_task_self_, &addr, &size, VM_REGION_BASIC_INFO_64, $0, &count, &object)
+                    }
+                }
+                LogStore.shared.log(String(format: "RW remap diagnostic %@ query=0x%lx next=0x%lx size=%luMB prot=%d/%d kr=%d",
+                                           label, Int(query), Int(addr), Int(size >> 20), info.protection, info.max_protection, kr), level: .error)
+                if object != 0 { mach_port_deallocate(mach_task_self_, object) }
+            }
+            logVMRegion("RX start", at: rxAddrV)
+            logVMRegion("RX end", at: rxAddrV + vm_address_t(poolSize) - 1)
+            logVMRegion("high hint", at: highHint)
             return nil
         }
 
         let rwOverlaps = overlapsExeWindow(rwAddr, vm_address_t(poolSize))
+        if rwOverlaps {
+            LogStore.shared.log("RW alias overlaps executable window; refusing pool", level: .error)
+            vm_deallocate(mach_task_self_, rwAddr, vm_size_t(poolSize))
+            return nil
+        }
         LogStore.shared.log("ml977: RX=[\(String(format:"%p",Int(rxAddrV))),"
             + "\(String(format:"%p",Int(rxAddrV + vm_address_t(poolSize))))) "
             + "RW=[\(String(format:"%p",Int(rwAddr))),"
