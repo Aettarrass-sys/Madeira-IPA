@@ -32,7 +32,7 @@ jobs:
               -o "$name.metal" || exit
             wc -c "$name.metal"
             echo "Compiling $name"
-            xcrun -sdk macosx metal -v -o "$name.air" -c "$name.metal" \
+            xcrun -sdk macosx metal -o "$name.air" -c "$name.metal" \
               -std=metal3.1 --target=air64-apple-macos14.0
             status=$?
             echo "$name compile exit status: $status"
@@ -40,4 +40,7 @@ jobs:
             output_status=$?
             echo "$name nonempty AIR output: $((1-output_status))"
             if (( status != 0 || output_status != 0 )); then exit 1; fi
+            xxd -n "$name" -i "$name.air" "$name.h"
+            echo "$name header status: $?"
+            test -s "$name.h" || exit 1
           done
