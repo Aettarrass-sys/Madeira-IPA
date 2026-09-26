@@ -13,8 +13,9 @@ curl --fail --location --retry 3 --output "$work/VC_redist.x64.exe" \
   'https://aka.ms/vs/17/release/vc_redist.x64.exe'
 shasum -a 256 "$work/VC_redist.x64.exe"
 
-# Microsoft changes the outer installer layout. Inspect all CAB layers, then
-# select files by their PE machine type and certificate table, not by size alone.
+# Microsoft changes the outer installer layout. CAB payloads can have opaque
+# names and no CAB file signature, so try every non-DLL at each nested level.
+# Select final files by PE machine type and certificate table, not size alone.
 cabextract -q -L -d "$work/level0" "$work/VC_redist.x64.exe" || true
 test -n "$(find "$work/level0" -type f -print -quit)" || {
   echo 'No CAB payload was extracted from the Microsoft installer' >&2
@@ -23,12 +24,11 @@ test -n "$(find "$work/level0" -type f -print -quit)" || {
 for level in 0 1; do
   next=$((level + 1))
   while IFS= read -r -d '' candidate; do
-    case "$(file -b "$candidate")" in
-      *cabinet*|*Cabinet*)
-        mkdir -p "$work/level$next/$(basename "$candidate").d"
-        cabextract -q -L -d "$work/level$next/$(basename "$candidate").d" "$candidate" || true
-        ;;
-    esac
+    [[ "$candidate" =~ \.[Dd][Ll][Ll]$ ]] && continue
+    relative="${candidate#"$work/level$level/"}"
+    output="$work/level$next/$relative.d"
+    mkdir -p "$output"
+    cabextract -q -L -d "$output" "$candidate" >/dev/null 2>&1 || true
   done < <(find "$work/level$level" -type f -print0)
 done
 
