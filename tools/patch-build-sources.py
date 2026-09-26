@@ -13,6 +13,13 @@ def replace_once(path: Path, old: str, new: str) -> None:
 
 
 def patch_fex(root: Path) -> None:
+    allocator = root / "FEXCore/Source/Utils/AllocatorHooks.cpp"
+    replace_once(allocator,
+                 '''size_t malloc_usable_size(void* ptr) {
+  IOS_RPM_GUARD();
+#ifdef __APPLE__''',
+                 '''size_t malloc_usable_size(void* ptr) {
+#ifdef __APPLE__''')
     arch = root / "FEXCore/Source/Utils/ArchHelpers/Arm64.cpp"
     old = '''  MEMORY_BASIC_INFORMATION mbi {};
   const char* type = "?";
