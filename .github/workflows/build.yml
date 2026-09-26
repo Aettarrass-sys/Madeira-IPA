@@ -166,7 +166,7 @@ jobs:
             build/freetype-ios/build
             toolchains/gnutls-ios
             build/gnutls-ios/obj
-          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py') }}-xcode26.6-v1
+          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py') }}-xcode26.6-v2
 
       - name: Build Wine headers, GnuTLS and FreeType
         if: steps.wine-prereq-cache.outputs.cache-hit != 'true'
@@ -175,13 +175,18 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
           mkdir -p wine/build-arm64ec wine/build-macos
           (cd wine/build-arm64ec && ../configure --enable-archs=arm64ec --without-x --disable-tests)
-          make -C wine/build-arm64ec -j"$(sysctl -n hw.ncpu)" \
-            include/dwrite.h include/dwrite_3.h \
-            include/objidlbase.h include/unknwn.h
-          test -s wine/build-arm64ec/include/dwrite.h
-          test -s wine/build-arm64ec/include/dwrite_3.h
-          test -s wine/build-arm64ec/include/objidlbase.h
-          test -s wine/build-arm64ec/include/unknwn.h
+          # Wine's generated headers include their imported IDL headers. Build
+          # the complete dwrite/COM import chain with Wine's configured rules.
+          headers=(dcommon dwrite dwrite_1 dwrite_2 dwrite_3 dxgiformat \
+            objidlbase unknwn wtypes wtypesbase)
+          targets=()
+          for header in "${headers[@]}"; do
+            targets+=("include/$header.h")
+          done
+          make -C wine/build-arm64ec -j"$(sysctl -n hw.ncpu)" "${targets[@]}"
+          for header in "${headers[@]}"; do
+            test -s "wine/build-arm64ec/include/$header.h"
+          done
           (cd wine/build-macos && ../configure --without-x --without-freetype \
             CFLAGS='-arch arm64' LDFLAGS='-arch arm64')
           test -s wine/build-macos/include/config.h
@@ -203,7 +208,7 @@ jobs:
             build/freetype-ios/build
             toolchains/gnutls-ios
             build/gnutls-ios/obj
-          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py') }}-xcode26.6-v1
+          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py') }}-xcode26.6-v2
 
       - name: Build Wine iOS static libraries
         if: steps.native-cache.outputs.cache-hit != 'true'
