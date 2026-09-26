@@ -1,0 +1,41 @@
+name: Diagnose DXMT Metal shader compilation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  metal:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            xcode: /Applications/Xcode_26.6.app
+          - runner: macos-15
+            xcode: /Applications/Xcode_16.4.app
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Compile the pinned DXMT shader with the selected Metal compiler
+        shell: bash
+        run: |
+          set -uo pipefail
+          sudo xcode-select -s '${{ matrix.xcode }}'
+          xcodebuild -version
+          xcodebuild -downloadComponent MetalToolchain
+          xcrun -sdk macosx --find metal
+          curl --fail --location --retry 3 \
+            https://raw.githubusercontent.com/willfaust/dxmt/ca8a2516d819e7e1f366981825ad1f0d26f80fdd/src/airconv/shaders/air_msad.metal \
+            -o air_msad.metal
+          wc -c air_msad.metal
+          set +e
+          xcrun -sdk macosx metal -v -o air_msad.air -c air_msad.metal \
+            -std=metal3.1 --target=air64-apple-macos14.0
+          status=$?
+          echo "Metal compile exit status: $status"
+          test -s air_msad.air
+          output_status=$?
+          echo "Nonempty AIR output: $((1-output_status))"
+          exit "$status"
