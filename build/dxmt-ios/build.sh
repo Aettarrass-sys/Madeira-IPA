@@ -74,8 +74,11 @@ compile_objcxx_arc() {
         echo "FAILED"; FAILED=$((FAILED+1)); FAILED_FILES="$FAILED_FILES $name"
     fi
 }
-if [[ -f "$BUILD_DIR/../madeira-d3d12/deps.sh" ]] && \
-   source "$BUILD_DIR/../madeira-d3d12/deps.sh" 2>/dev/null; then
+# deps.sh calls exit when its locally supplied package is missing. Source it
+# only when the optional package is present; keep any validation error visible.
+if [[ -f "$BUILD_DIR/../madeira-d3d12/deps.sh" && \
+      -f "$REPO_ROOT/research/GPTK/Metal Shader Converter 4.0 beta 2.pkg" ]] && \
+   source "$BUILD_DIR/../madeira-d3d12/deps.sh"; then
     echo "=== madeira-d3d12 canary (Objective-C++, Metal Shader Converter) ==="
     compile_objcxx_arc "$REPO_ROOT/research/madeira-d3d12/tests/native/msc_canary.mm" \
                        msc_canary "-DIR_PRIVATE_IMPLEMENTATION -I$MSC_INCLUDE"
