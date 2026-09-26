@@ -51,6 +51,7 @@ jobs:
           key="$(printf '%s\n' "$GITHUB_SHA" 'macos-26-xcode-26.6-ios18' \
             "$(git submodule status --recursive)" | shasum -a 256 | cut -d' ' -f1)"
           echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "wine=$(git rev-parse HEAD:wine)" >> "$GITHUB_OUTPUT"
 
       - name: Restore llvm-mingw
         id: mingw-cache
@@ -129,12 +130,6 @@ jobs:
         with:
           path: |
             FEX/build-ios
-            wine/build-arm64ec
-            wine/build-macos
-            research/freetype
-            build/freetype-ios/build
-            toolchains/gnutls-ios
-            build/gnutls-ios/obj
             build/ntdll-unix/obj
             build/win32u-unix/obj
             build/wineserver/obj
@@ -147,11 +142,9 @@ jobs:
             app/Madeira/libdxmt_combined.a
           key: madeira-native-${{ steps.source.outputs.key }}-v1
 
-      - name: Build Wine headers, GnuTLS and FreeType
-        if: steps.native-cache.outputs.cache-hit != 'true'
+      - name: Prepare pinned Wine sources
         run: |
           set -euo pipefail
-          export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
           # The pinned Wine commit references this untracked PE-only .c file.
           # Wine's makedep scans it during configure even though this workflow
           # uses the already tracked PE DLLs. An empty sentinel lets header
@@ -161,12 +154,34 @@ jobs:
           grep -Fq '#include "arm64ec_x64_export_iat.c"' wine/dlls/ntdll/loader.c
           printf '%s\n' '/* CI sentinel for Wine makedep; PE ntdll is not built here. */' > "$missing"
           python3 tools/patch-build-sources.py wine wine
+
+      - name: Restore Wine header and library prerequisites
+        id: wine-prereq-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            wine/build-arm64ec
+            wine/build-macos
+            research/freetype
+            build/freetype-ios/build
+            toolchains/gnutls-ios
+            build/gnutls-ios/obj
+          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py') }}-xcode26.6-v1
+
+      - name: Build Wine headers, GnuTLS and FreeType
+        if: steps.wine-prereq-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
           mkdir -p wine/build-arm64ec wine/build-macos
           (cd wine/build-arm64ec && ../configure --enable-archs=arm64ec --without-x --disable-tests)
           make -C wine/build-arm64ec -j"$(sysctl -n hw.ncpu)" \
-            include/dwrite.h include/dwrite_3.h
+            include/dwrite.h include/dwrite_3.h \
+            include/objidlbase.h include/unknwn.h
           test -s wine/build-arm64ec/include/dwrite.h
           test -s wine/build-arm64ec/include/dwrite_3.h
+          test -s wine/build-arm64ec/include/objidlbase.h
+          test -s wine/build-arm64ec/include/unknwn.h
           (cd wine/build-macos && ../configure --without-x --without-freetype \
             CFLAGS='-arch arm64' LDFLAGS='-arch arm64')
           test -s wine/build-macos/include/config.h
@@ -176,6 +191,19 @@ jobs:
           git -C research/freetype checkout --detach FETCH_HEAD
           bash build/gnutls-ios/build.sh
           bash build/freetype-ios/build.sh
+
+      - name: Save Wine header and library prerequisites
+        if: steps.wine-prereq-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            wine/build-arm64ec
+            wine/build-macos
+            research/freetype
+            build/freetype-ios/build
+            toolchains/gnutls-ios
+            build/gnutls-ios/obj
+          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py') }}-xcode26.6-v1
 
       - name: Build Wine iOS static libraries
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -231,12 +259,6 @@ jobs:
         with:
           path: |
             FEX/build-ios
-            wine/build-arm64ec
-            wine/build-macos
-            research/freetype
-            build/freetype-ios/build
-            toolchains/gnutls-ios
-            build/gnutls-ios/obj
             build/ntdll-unix/obj
             build/win32u-unix/obj
             build/wineserver/obj

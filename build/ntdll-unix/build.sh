@@ -158,6 +158,14 @@ if [ -n "$FAILED_FILES" ]; then
     echo "Failed:$FAILED_FILES"
 fi
 
+if [ "$FAILED" -gt 0 ]; then
+    for name in $FAILED_FILES; do
+        echo "=== $name compiler diagnostics ==="
+        sed -n '1,35p' "$OBJ_DIR/$name.err"
+    done
+    exit 1
+fi
+
 echo ""
 echo "=== Building libntdll_unix.a ==="
 ar rcs "$OBJ_DIR/libntdll_unix.a" \
