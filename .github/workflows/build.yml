@@ -277,7 +277,7 @@ jobs:
             -DENABLE_CCACHE=OFF -DENABLE_FEX_ALLOCATOR=OFF \
             -DENABLE_ASSERTIONS=OFF -DENABLE_CLANG_THUNKS=ON \
             -DTUNE_CPU=generic -DTUNE_ARCH=generic
-          cmake --build FEX/build-ios --target FEXCore FEXCore_Base \
+          cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs \
             --parallel "$(sysctl -n hw.ncpu)"
           for lib in FEX/build-ios/FEXCore/Source/lib{FEXCore,FEXCore_Base,JemallocLibs}.a \
             FEX/build-ios/External/fmt/libfmt.a \
