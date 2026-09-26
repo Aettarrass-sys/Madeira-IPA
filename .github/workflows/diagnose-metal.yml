@@ -24,18 +24,20 @@ jobs:
           set -uo pipefail
           sudo xcode-select -s '${{ matrix.xcode }}'
           xcodebuild -version
-          xcodebuild -downloadComponent MetalToolchain
+          xcodebuild -downloadComponent MetalToolchain >/dev/null 2>&1 || true
           xcrun -sdk macosx --find metal
-          curl --fail --location --retry 3 \
-            https://raw.githubusercontent.com/willfaust/dxmt/ca8a2516d819e7e1f366981825ad1f0d26f80fdd/src/airconv/shaders/air_msad.metal \
-            -o air_msad.metal
-          wc -c air_msad.metal
-          set +e
-          xcrun -sdk macosx metal -v -o air_msad.air -c air_msad.metal \
-            -std=metal3.1 --target=air64-apple-macos14.0
-          status=$?
-          echo "Metal compile exit status: $status"
-          test -s air_msad.air
-          output_status=$?
-          echo "Nonempty AIR output: $((1-output_status))"
-          exit "$status"
+          for name in air_msad air_samplepos air_tessellation; do
+            curl --fail --location --retry 3 \
+              "https://raw.githubusercontent.com/willfaust/dxmt/ca8a2516d819e7e1f366981825ad1f0d26f80fdd/src/airconv/shaders/$name.metal" \
+              -o "$name.metal" || exit
+            wc -c "$name.metal"
+            echo "Compiling $name"
+            xcrun -sdk macosx metal -v -o "$name.air" -c "$name.metal" \
+              -std=metal3.1 --target=air64-apple-macos14.0
+            status=$?
+            echo "$name compile exit status: $status"
+            test -s "$name.air"
+            output_status=$?
+            echo "$name nonempty AIR output: $((1-output_status))"
+            if (( status != 0 || output_status != 0 )); then exit 1; fi
+          done
