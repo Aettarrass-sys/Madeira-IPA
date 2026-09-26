@@ -256,9 +256,20 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
-          # DXMT links against Wine's ARM64EC import and CRT archives.
+          # Directory names are not Wine build targets: make can report
+          # "Nothing to be done" while the architecture archives are absent.
+          # DXMT links against these exact ARM64EC CRT and import archives.
           make -C wine/build-arm64ec -j"$(sysctl -n hw.ncpu)" \
-            tools/winebuild libs/winecrt0 dlls/ntdll dlls/dbghelp
+            tools/winebuild/winebuild \
+            libs/winecrt0/arm64ec-windows/libwinecrt0.a \
+            dlls/ntdll/arm64ec-windows/libntdll.a \
+            dlls/dbghelp/arm64ec-windows/libdbghelp.a
+          for archive in \
+            wine/build-arm64ec/libs/winecrt0/arm64ec-windows/libwinecrt0.a \
+            wine/build-arm64ec/dlls/ntdll/arm64ec-windows/libntdll.a \
+            wine/build-arm64ec/dlls/dbghelp/arm64ec-windows/libdbghelp.a; do
+            test -s "$archive" || { echo "Missing Wine PE archive: $archive" >&2; exit 1; }
+          done
           python3 tools/patch-dxmt-metal.py research/dxmt
           ln -s ../../toolchains research/dxmt/toolchains
           SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" \
