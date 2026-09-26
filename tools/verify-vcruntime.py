@@ -50,7 +50,7 @@ def main() -> int:
         for name in NAMES:
             matches = [
                 p for p in candidates
-                if p.is_file() and p.name.lower() == name
+                if p.is_file() and p.name.lower() in (name, f"{name}_amd64")
                 and valid_x64_signed_pe(p)
             ]
             if not matches:
