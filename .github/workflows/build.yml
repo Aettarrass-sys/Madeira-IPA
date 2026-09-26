@@ -290,18 +290,31 @@ jobs:
       - name: Build DXMT iOS static library
         if: steps.native-cache.outputs.cache-hit != 'true'
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          trap 'status=$?; echo "DXMT step failed at line $LINENO (exit $status)" >&2; vm_stat >&2; exit "$status"' ERR
           if ! xcodebuild -downloadComponent MetalToolchain; then
             echo "MetalToolchain download returned a failure; checking the compiler directly"
           fi
           xcrun -sdk macosx --find metal
+          command -v xxd
           mkdir -p build/dxmt-ios/shader-headers
           for name in air_msad air_samplepos air_tessellation; do
-            xcrun -sdk macosx metal -o "build/dxmt-ios/shader-headers/$name.air" \
-              -c "research/dxmt/src/airconv/shaders/$name.metal" \
-              -std=metal3.1 --target=air64-apple-macos14.0
+            echo "Compiling pinned DXMT shader: $name"
+            for attempt in 1 2 3; do
+              if xcrun -sdk macosx metal -o "build/dxmt-ios/shader-headers/$name.air" \
+                  -c "research/dxmt/src/airconv/shaders/$name.metal" \
+                  -std=metal3.1 --target=air64-apple-macos14.0; then
+                break
+              fi
+              echo "Metal compiler attempt $attempt failed for $name" >&2
+              if (( attempt == 3 )); then exit 1; fi
+              sleep 3
+            done
+            test -s "build/dxmt-ios/shader-headers/$name.air"
+            echo "Generating DXMT shader header: $name"
             xxd -n "$name" -i "build/dxmt-ios/shader-headers/$name.air" \
               "build/dxmt-ios/shader-headers/$name.h"
+            test -s "build/dxmt-ios/shader-headers/$name.h"
           done
           if ! bash build/dxmt-ios/build.sh; then
             for error_file in build/dxmt-ios/obj/*.err; do
