@@ -1,0 +1,331 @@
+name: Build Madeira IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BUNDLE_ID: com.NotBoodiOS.madeira
+  IOS_DEPLOYMENT_TARGET: '18.0'
+  LLVM_MINGW_TAG: '20260421'
+  LLVM_MINGW_SHA256: bd85a3975723815cef28dbbd2ca2cb0c926f6b348a12a0453f39f7af273cb3f7
+  LLVM_15_COMMIT: 8dfdcc7b7bf66834a761bd8de445840ef68e4d1a
+  FREETYPE_COMMIT: 534ad3456055ee1f65ecde3bcf22a656a31514d1
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 360
+    steps:
+      - name: Check out the pinned source tree
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Select Xcode 26.6 and install host tools
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version
+          test "$(xcodebuild -version | head -1)" = 'Xcode 26.6'
+          xcodebuild -showsdks | grep iphoneos
+          brew install bison cmake ninja meson nasm pkg-config cabextract llvm
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+
+      - name: Check source inputs and cache identity
+        id: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:FEX)" = "$(git -C FEX rev-parse HEAD)"
+          test "$(git rev-parse HEAD:wine)" = "$(git -C wine rev-parse HEAD)"
+          test "$(git rev-parse HEAD:research/dxmt)" = "$(git -C research/dxmt rev-parse HEAD)"
+          git submodule status --recursive
+          (cd build/gnutls-ios/src && shasum -a 256 -c SHA256SUMS)
+          shasum -a 256 app/Madeira/d3d12/libmetalirconverter.dylib \
+            | grep '^073f903be98e973ff38f4d79f2c48d61ef938754a77b1caedda79c9f05a068c2 '
+          bash tools/check-prefix-template.sh
+          key="$(printf '%s\n' "$GITHUB_SHA" 'macos-26-xcode-26.6-ios18' \
+            "$(git submodule status --recursive)" | shasum -a 256 | cut -d' ' -f1)"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Restore llvm-mingw
+        id: mingw-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: toolchains/llvm-mingw-20260421-ucrt-macos-universal
+          key: madeira-mingw-${{ env.LLVM_MINGW_TAG }}-${{ env.LLVM_MINGW_SHA256 }}-macos26
+
+      - name: Install pinned llvm-mingw
+        if: steps.mingw-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_TAG}/llvm-mingw-${LLVM_MINGW_TAG}-ucrt-macos-universal.tar.xz" \
+            -o "$RUNNER_TEMP/llvm-mingw.tar.xz"
+          echo "${LLVM_MINGW_SHA256}  $RUNNER_TEMP/llvm-mingw.tar.xz" | shasum -a 256 -c -
+          mkdir -p toolchains
+          tar -xJf "$RUNNER_TEMP/llvm-mingw.tar.xz" -C toolchains
+          test -x toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin/arm64ec-w64-mingw32-clang
+
+      - name: Save llvm-mingw
+        if: steps.mingw-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: toolchains/llvm-mingw-20260421-ucrt-macos-universal
+          key: madeira-mingw-${{ env.LLVM_MINGW_TAG }}-${{ env.LLVM_MINGW_SHA256 }}-macos26
+
+      - name: Restore LLVM 15 iOS build
+        id: llvm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            toolchains/llvm-project
+            toolchains/llvm-ios-build
+          key: madeira-llvm15-${{ env.LLVM_15_COMMIT }}-ios18-xcode26.6-v1
+
+      - name: Build pinned LLVM 15 for iOS
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          git init toolchains/llvm-project
+          git -C toolchains/llvm-project remote add origin https://github.com/llvm/llvm-project.git
+          git -C toolchains/llvm-project fetch --depth=1 origin "$LLVM_15_COMMIT"
+          git -C toolchains/llvm-project checkout --detach FETCH_HEAD
+          python3 tools/patch-build-sources.py llvm toolchains/llvm-project
+          cmake -S toolchains/llvm-project/llvm -B toolchains/llvm-host-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_ENABLE_ZLIB=OFF
+          cmake --build toolchains/llvm-host-build --target llvm-tblgen --parallel "$(sysctl -n hw.ncpu)"
+          cmake -S toolchains/llvm-project/llvm -B toolchains/llvm-ios-build -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=18.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_TABLEGEN="$GITHUB_WORKSPACE/toolchains/llvm-host-build/bin/llvm-tblgen" \
+            -DLLVM_BUILD_UTILS=OFF -DLLVM_BUILD_TOOLS=OFF -DLLVM_INCLUDE_TOOLS=OFF \
+            -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_ENABLE_ZLIB=OFF -DLLVM_TARGETS_TO_BUILD=''
+          cmake --build toolchains/llvm-ios-build --parallel "$(sysctl -n hw.ncpu)"
+          test -s toolchains/llvm-ios-build/lib/libLLVMSupport.a
+          find toolchains/llvm-ios-build -name '*.o' -delete
+
+      - name: Save LLVM 15 iOS build
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            toolchains/llvm-project
+            toolchains/llvm-ios-build
+          key: madeira-llvm15-${{ env.LLVM_15_COMMIT }}-ios18-xcode26.6-v1
+
+      - name: Restore native build outputs
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            FEX/build-ios
+            wine/build-arm64ec
+            wine/build-macos
+            research/freetype
+            build/freetype-ios/build
+            toolchains/gnutls-ios
+            build/gnutls-ios/obj
+            build/ntdll-unix/obj
+            build/win32u-unix/obj
+            build/wineserver/obj
+            build/dxmt-ios/obj
+            build/dxmt-ios/shader-headers
+            build/dxmt-ios/libdxmt_combined.a
+            app/Madeira/libntdll_unix.a
+            app/Madeira/libwin32u_unix.a
+            app/Madeira/libwineserver.a
+            app/Madeira/libdxmt_combined.a
+          key: madeira-native-${{ steps.source.outputs.key }}-v1
+
+      - name: Build Wine headers, GnuTLS and FreeType
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
+          mkdir -p wine/build-arm64ec wine/build-macos
+          (cd wine/build-arm64ec && ../configure --enable-archs=arm64ec --without-x --disable-tests)
+          make -C wine/build-arm64ec -j"$(sysctl -n hw.ncpu)" dlls/ntdll
+          make -C wine/build-arm64ec -j"$(sysctl -n hw.ncpu)" \
+            include/dwrite.h include/dwrite_3.h
+          test -s wine/build-arm64ec/include/dwrite.h
+          test -s wine/build-arm64ec/include/dwrite_3.h
+          (cd wine/build-macos && ../configure --without-x --without-freetype \
+            CFLAGS='-arch arm64' LDFLAGS='-arch arm64')
+          test -s wine/build-macos/include/config.h
+          git init research/freetype
+          git -C research/freetype remote add origin https://github.com/freetype/freetype.git
+          git -C research/freetype fetch --depth=1 origin "$FREETYPE_COMMIT"
+          git -C research/freetype checkout --detach FETCH_HEAD
+          bash build/gnutls-ios/build.sh
+          bash build/freetype-ios/build.sh
+
+      - name: Build Wine iOS static libraries
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          bash build/ntdll-unix/build.sh
+          bash build/win32u-unix/build.sh
+          bash tools/build-wineserver-ios.sh
+
+      - name: Build FEX iOS static libraries
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          python3 tools/patch-build-sources.py fex FEX
+          cmake -S FEX -B FEX/build-ios -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_SYSTEM_PROCESSOR=arm64 \
+            -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=18.0 -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS='-DFEX_IOS_HOST=1' -DCMAKE_CXX_FLAGS='-DFEX_IOS_HOST=1' \
+            -DBUILD_TESTING=OFF -DBUILD_FEX_LINUX_TESTS=OFF -DBUILD_THUNKS=OFF \
+            -DBUILD_FEXCONFIG=OFF -DBUILD_STEAM_SUPPORT=OFF -DENABLE_LTO=OFF \
+            -DENABLE_CCACHE=OFF -DENABLE_FEX_ALLOCATOR=OFF \
+            -DENABLE_ASSERTIONS=OFF -DENABLE_CLANG_THUNKS=ON \
+            -DTUNE_CPU=generic -DTUNE_ARCH=generic
+          cmake --build FEX/build-ios --target FEXCore FEXCore_Base \
+            --parallel "$(sysctl -n hw.ncpu)"
+
+      - name: Build DXMT iOS static library
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          xcodebuild -downloadComponent MetalToolchain
+          mkdir -p build/dxmt-ios/shader-headers
+          for name in air_msad air_samplepos air_tessellation; do
+            xcrun -sdk macosx metal -o "build/dxmt-ios/shader-headers/$name.air" \
+              -c "research/dxmt/src/airconv/shaders/$name.metal" \
+              -std=metal3.1 --target=air64-apple-macos14.0
+            xxd -n "$name" -i "build/dxmt-ios/shader-headers/$name.air" \
+              "build/dxmt-ios/shader-headers/$name.h"
+          done
+          bash build/dxmt-ios/build.sh
+          shopt -s nullglob
+          objects=(build/dxmt-ios/obj/*.o)
+          llvm_libs=(toolchains/llvm-ios-build/lib/*.a)
+          (( ${#objects[@]} > 0 && ${#llvm_libs[@]} > 0 ))
+          xcrun -sdk iphoneos libtool -static -o build/dxmt-ios/libdxmt_combined.a \
+            "${objects[@]}" "${llvm_libs[@]}"
+          cp build/dxmt-ios/libdxmt_combined.a app/Madeira/libdxmt_combined.a
+
+      - name: Save native build outputs
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            FEX/build-ios
+            wine/build-arm64ec
+            wine/build-macos
+            research/freetype
+            build/freetype-ios/build
+            toolchains/gnutls-ios
+            build/gnutls-ios/obj
+            build/ntdll-unix/obj
+            build/win32u-unix/obj
+            build/wineserver/obj
+            build/dxmt-ios/obj
+            build/dxmt-ios/shader-headers
+            build/dxmt-ios/libdxmt_combined.a
+            app/Madeira/libntdll_unix.a
+            app/Madeira/libwin32u_unix.a
+            app/Madeira/libwineserver.a
+            app/Madeira/libdxmt_combined.a
+          key: madeira-native-${{ steps.source.outputs.key }}-v1
+
+      - name: Prepare resources and verify linker inputs
+        run: |
+          set -euo pipefail
+          for name in gnutls hogweed nettle gmp; do
+            cp "toolchains/gnutls-ios/lib/lib${name}.a" "app/Madeira/lib${name}.a"
+          done
+          bash tools/fetch-vcruntime.sh
+          bash build/stage-licenses.sh
+          bash tools/check-prefix-template.sh
+          python3 tools/verify-vcruntime.py --dest app/Madeira/x86_64-vcruntime
+          for lib in app/Madeira/lib{ntdll_unix,win32u_unix,wineserver,dxmt_combined,gnutls,hogweed,nettle,gmp}.a \
+            FEX/build-ios/FEXCore/Source/lib{FEXCore,FEXCore_Base,JemallocLibs}.a \
+            FEX/build-ios/External/fmt/libfmt.a \
+            FEX/build-ios/External/cephes/libcephes_128bit.a \
+            FEX/build-ios/External/xxhash/cmake_unofficial/libxxhash.a \
+            FEX/build-ios/External/SoftFloat-3e/libsoftfloat_3e.a; do
+            test -s "$lib" || { echo "Missing linker input: $lib" >&2; exit 1; }
+            if xcrun otool -l "$lib" | grep -E 'LC_VERSION_MIN_MACOSX|platform (MACOS|1)$'; then
+              echo "macOS object found in $lib" >&2; exit 1
+            fi
+          done
+
+      - name: Build unsigned Debug app
+        run: |
+          set -euo pipefail
+          xcodebuild -project app/Madeira.xcodeproj -scheme Madeira \
+            -configuration Debug -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/madeira-derived" build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            IPHONEOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET"
+          app="$RUNNER_TEMP/madeira-derived/Build/Products/Debug-iphoneos/Madeira.app"
+          test -s "$app/Madeira"
+          echo "APP_PATH=$app" >> "$GITHUB_ENV"
+
+      - name: Sign, package and verify IPA
+        run: |
+          set -euo pipefail
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/Madeira.app
+          codesign --force --sign - --timestamp=none \
+            Payload/Madeira.app/d3d12/libmetalirconverter.dylib
+          codesign --force --sign - --timestamp=none \
+            --entitlements app/Madeira/Madeira.entitlements Payload/Madeira.app
+          codesign --verify --strict --verbose=2 Payload/Madeira.app/d3d12/libmetalirconverter.dylib
+          codesign --verify --strict --verbose=2 Payload/Madeira.app
+          codesign -d --entitlements :- Payload/Madeira.app > "$RUNNER_TEMP/entitlements.plist" 2>/dev/null
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.kernel.extended-virtual-addressing' \
+            "$RUNNER_TEMP/entitlements.plist" | grep -qx true
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.kernel.increased-memory-limit' \
+            "$RUNNER_TEMP/entitlements.plist" | grep -qx true
+          zip -qry Madeira.ipa Payload
+          python3 tools/verify-ipa.py Madeira.ipa --bundle-id "$BUNDLE_ID"
+          shasum -a 256 Madeira.ipa > Madeira.ipa.sha256
+          {
+            echo "source=$GITHUB_SHA"
+            echo "bundle=$BUNDLE_ID"
+            echo "configuration=Debug"
+            echo "minimum_ios=$IOS_DEPLOYMENT_TARGET"
+            xcodebuild -version
+            git submodule status --recursive
+          } > Madeira-build-manifest.txt
+
+      - name: Upload SideStore IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Madeira-Debug-iOS18
+          path: |
+            Madeira.ipa
+            Madeira.ipa.sha256
+            Madeira-build-manifest.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload native compiler diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Madeira-native-diagnostics
+          path: |
+            build/ntdll-unix/obj/*.err
+            build/win32u-unix/obj/*.err
+            build/wineserver/obj/err-*.txt
+            build/dxmt-ios/obj/*.err
+            build/gnutls-ios/obj/*-configure.log
+            build/gnutls-ios/obj/*-make.log
+          if-no-files-found: ignore
+          retention-days: 7
