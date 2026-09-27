@@ -157,7 +157,7 @@ jobs:
           # Older Wine pins omitted this file; the WoW64 companion tracks it.
           missing=wine/dlls/ntdll/arm64ec_x64_export_iat.c
           test -s "$missing"
-          python3 tools/patch-build-sources.py wine wine
+          grep -Fq '#include "config.h"   /* makedep requires it first */' wine/dlls/ntdll/unix/sync.c
 
       - name: Restore Wine header and library prerequisites
         id: wine-prereq-cache
