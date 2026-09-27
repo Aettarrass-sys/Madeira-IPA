@@ -42,6 +42,24 @@
 // Embedded x86-64 ELF binary (Hello World, statically linked)
 #include "hello_x86.h"
 
+// FEXCore is linked into the app for its native JIT self-test. These hooks are
+// implemented by the Windows ARM64EC DLL in real Wine sessions, so the host
+// self-test needs inert definitions to satisfy the native linker.
+extern "C" {
+uint64_t IosFfsBypassLog[4] = {};
+uintptr_t ios_fex_band_base = 0;
+uintptr_t ios_fex_band_end = 0;
+uint64_t IosJitReverseTranslate(uint64_t address) { return address; }
+uint64_t IosSubfloorToReal(uint64_t address) { return address; }
+uint64_t IosMonoResolveRW(uint64_t, uint64_t) { return 0; }
+int ios_fex_mono_bridge_armed() { return 0; }
+int ios_fex_mono_take_pending(uint64_t*, uint64_t*, uint64_t*) { return 0; }
+uint64_t ios_fex_mono_captured_count() { return 0; }
+void ios_fex_mono_count_activated() {}
+void ios_fex_mono_count_helper(int) {}
+int rpm_cas_snapshot_take(void*) { return 0; }
+}
+
 // __clear_cache is a compiler-rt builtin for icache invalidation.
 // On iOS ARM64 we provide it via sys_icache_invalidate.
 extern "C" void __clear_cache(void *start, void *end) {
