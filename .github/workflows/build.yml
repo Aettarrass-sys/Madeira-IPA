@@ -154,6 +154,7 @@ jobs:
       - name: Prepare pinned Wine sources
         run: |
           set -euo pipefail
+          python3 tools/patch-wine-wow64-native-tls.py wine
           # Older Wine pins omitted this file; the WoW64 companion tracks it.
           missing=wine/dlls/ntdll/arm64ec_x64_export_iat.c
           test -s "$missing"
