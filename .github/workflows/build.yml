@@ -384,11 +384,20 @@ jobs:
           xcrun -sdk iphoneos --find metal
           mkdir -p build/dxmt-ios/shader-headers
           for name in air_msad air_samplepos air_tessellation; do
-            xcrun -sdk iphoneos metal -o "build/dxmt-ios/shader-headers/$name.air" \
+            echo "Compiling Metal shader: $name"
+            if ! xcrun -sdk iphoneos metal -o "build/dxmt-ios/shader-headers/$name.air" \
               -c "research/dxmt/src/airconv/shaders/$name.metal" \
-              -std=metal3.1 --target=air64-apple-ios18.0
+              -std=metal3.1 --target=air64-apple-ios18.0; then
+              echo "Metal compiler failed for $name; retrying once" >&2
+              xcrun -sdk iphoneos metal -o "build/dxmt-ios/shader-headers/$name.air" \
+                -c "research/dxmt/src/airconv/shaders/$name.metal" \
+                -std=metal3.1 --target=air64-apple-ios18.0
+            fi
+            test -s "build/dxmt-ios/shader-headers/$name.air"
+            echo "Embedding Metal shader: $name"
             xxd -n "$name" -i "build/dxmt-ios/shader-headers/$name.air" \
               "build/dxmt-ios/shader-headers/$name.h"
+            test -s "build/dxmt-ios/shader-headers/$name.h"
           done
           if ! bash build/dxmt-ios/build.sh; then
             for error_file in build/dxmt-ios/obj/*.err; do
