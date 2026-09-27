@@ -163,6 +163,7 @@ jobs:
           for shim in build/ntdll-unix/shims/ios_*.h; do
             ln -s "$GITHUB_WORKSPACE/$shim" "wine/dlls/ntdll/unix/$(basename "$shim")"
           done
+          ln -s "$GITHUB_WORKSPACE/build/ntdll-unix/shims/ios_fastsync.h" wine/server/ios_fastsync.h
 
       - name: Restore Wine header and library prerequisites
         id: wine-prereq-cache
