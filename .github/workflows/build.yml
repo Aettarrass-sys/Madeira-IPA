@@ -163,6 +163,27 @@ jobs:
           done
           ln -s "$GITHUB_WORKSPACE/build/ntdll-unix/shims/ios_fastsync.h" wine/server/ios_fastsync.h
 
+      - name: Restore pinned iOS FFmpeg build
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ffmpeg/src
+            build/ffmpeg/obj
+            toolchains/ffmpeg-ios
+            app/Madeira/libavformat.a
+            app/Madeira/libavcodec.a
+            app/Madeira/libswresample.a
+            app/Madeira/libavutil.a
+          key: madeira-ffmpeg-ios-${{ hashFiles('build/ffmpeg/build.sh') }}-xcode26.6
+
+      - name: Build pinned LGPL FFmpeg for fork media runtime
+        run: |
+          set -euo pipefail
+          bash build/ffmpeg/build.sh
+          for name in avformat avcodec swresample avutil; do
+            test -s "app/Madeira/lib${name}.a"
+          done
+
       - name: Restore Wine header and library prerequisites
         id: wine-prereq-cache
         uses: actions/cache/restore@v4
@@ -174,7 +195,7 @@ jobs:
             build/freetype-ios/build
             toolchains/gnutls-ios
             build/gnutls-ios/obj
-          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py') }}-xcode26.6-v4
+          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py', 'build/ffmpeg/build.sh') }}-xcode26.6-v5
 
       - name: Build Wine headers, GnuTLS and FreeType
         if: steps.wine-prereq-cache.outputs.cache-hit != 'true'
@@ -258,7 +279,7 @@ jobs:
             build/freetype-ios/build
             toolchains/gnutls-ios
             build/gnutls-ios/obj
-          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py') }}-xcode26.6-v4
+          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py', 'build/ffmpeg/build.sh') }}-xcode26.6-v5
 
       - name: Verify fork runtime baseline
         run: |
@@ -368,7 +389,7 @@ jobs:
           bash build/stage-licenses.sh
           bash tools/check-prefix-template.sh
           python3 tools/verify-vcruntime.py --dest app/Madeira/x86_64-vcruntime
-          for lib in app/Madeira/lib{ntdll_unix,win32u_unix,wineserver,dxmt_combined,gnutls,hogweed,nettle,gmp}.a \
+          for lib in app/Madeira/lib{ntdll_unix,win32u_unix,wineserver,dxmt_combined,gnutls,hogweed,nettle,gmp,avformat,avcodec,swresample,avutil}.a \
             FEX/build-ios/FEXCore/Source/lib{FEXCore,FEXCore_Base,JemallocLibs}.a \
             FEX/build-ios/External/fmt/libfmt.a \
             FEX/build-ios/External/cephes/libcephes_128bit.a \
