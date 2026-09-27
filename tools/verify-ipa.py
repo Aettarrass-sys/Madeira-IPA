@@ -108,7 +108,7 @@ def main() -> int:
             folder = source.parts[2]
             machine = pe_machine(data)
             want = {"aarch64-windows": 0xAA64, "arm64ec-windows": 0x8664,
-                    "i386-windows": 0x14C}.get(folder)
+                    "i386-windows": 0x14C, "x86_64-vcruntime": 0x8664}.get(folder)
             if want is None:
                 raise SystemExit(f"Unexpected PE folder: {folder}")
             if machine != want:
