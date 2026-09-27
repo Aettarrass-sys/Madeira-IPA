@@ -164,7 +164,8 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/build/ntdll-unix/shims/ios_fastsync.h" wine/server/ios_fastsync.h
 
       - name: Restore pinned iOS FFmpeg build
-        uses: actions/cache@v4
+        id: ffmpeg-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             build/ffmpeg/src
@@ -184,6 +185,20 @@ jobs:
             test -s "app/Madeira/lib${name}.a"
           done
 
+      - name: Save pinned iOS FFmpeg build
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/ffmpeg/src
+            build/ffmpeg/obj
+            toolchains/ffmpeg-ios
+            app/Madeira/libavformat.a
+            app/Madeira/libavcodec.a
+            app/Madeira/libswresample.a
+            app/Madeira/libavutil.a
+          key: madeira-ffmpeg-ios-${{ hashFiles('build/ffmpeg/build.sh') }}-xcode26.6
+
       - name: Restore Wine header and library prerequisites
         id: wine-prereq-cache
         uses: actions/cache/restore@v4
@@ -195,10 +210,24 @@ jobs:
             build/freetype-ios/build
             toolchains/gnutls-ios
             build/gnutls-ios/obj
-          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py', 'build/ffmpeg/build.sh') }}-xcode26.6-v5
+          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py', 'build/ffmpeg/build.sh') }}-xcode26.6-v6
+
+      - name: Restore Wine base prerequisites
+        if: steps.wine-prereq-cache.outputs.cache-hit != 'true'
+        id: wine-base-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            wine/build-arm64ec
+            wine/build-macos
+            research/freetype
+            build/freetype-ios/build
+            toolchains/gnutls-ios
+            build/gnutls-ios/obj
+          key: madeira-wine-base-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/gnutls-ios/build.sh', 'build/freetype-ios/build.sh') }}-xcode26.6-v1
 
       - name: Build Wine headers, GnuTLS and FreeType
-        if: steps.wine-prereq-cache.outputs.cache-hit != 'true'
+        if: steps.wine-prereq-cache.outputs.cache-hit != 'true' && steps.wine-base-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
@@ -207,7 +236,7 @@ jobs:
           # Wine's generated headers include their imported IDL headers. Build
           # the complete dwrite/COM import chain with Wine's configured rules.
           headers=(dcommon dwrite dwrite_1 dwrite_2 dwrite_3 dxgiformat \
-            oaidl objidl objidlbase oleidl propidl unknwn wtypes wtypesbase)
+            mfobjects mftransform oaidl objidl objidlbase oleidl propidl unknwn wtypes wtypesbase)
           targets=()
           for header in "${headers[@]}"; do
             targets+=("include/$header.h")
@@ -225,6 +254,24 @@ jobs:
           git -C research/freetype checkout --detach FETCH_HEAD
           bash build/gnutls-ios/build.sh
           bash build/freetype-ios/build.sh
+      - name: Save Wine base prerequisites
+        if: steps.wine-prereq-cache.outputs.cache-hit != 'true' && steps.wine-base-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            wine/build-arm64ec
+            wine/build-macos
+            research/freetype
+            build/freetype-ios/build
+            toolchains/gnutls-ios
+            build/gnutls-ios/obj
+          key: madeira-wine-base-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/gnutls-ios/build.sh', 'build/freetype-ios/build.sh') }}-xcode26.6-v1
+
+      - name: Complete generated Wine headers
+        if: steps.wine-prereq-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
           # Compile the consumer before caching headers. Wine's static headers
           # can include further IDL-generated headers outside the import chain.
           for attempt in {1..40}; do
@@ -232,13 +279,13 @@ jobs:
               break
             fi
             missing="$(sed -nE "s/.*fatal error: '([^']+\.h)' file not found.*/\1/p" \
-              build/ntdll-unix/obj/dwrite_unixlib.err | head -1)"
+              build/ntdll-unix/obj/{dwrite_unixlib,winegstreamer_unixlib}.err | sort -u | sed -n '1p')"
             if [[ -z "$missing" || ! -f "wine/include/${missing%.h}.idl" || \
                   -s "wine/build-arm64ec/include/$missing" ]]; then
               echo "ntdll compilation failed without a new Wine IDL header to generate" >&2
               exit 1
             fi
-            echo "Generating Wine header required by dwrite: $missing"
+            echo "Generating Wine header required by native unixlib: $missing"
             make -C wine/build-arm64ec "include/$missing"
             test -s "wine/build-arm64ec/include/$missing"
             if (( attempt == 40 )); then
@@ -279,7 +326,7 @@ jobs:
             build/freetype-ios/build
             toolchains/gnutls-ios
             build/gnutls-ios/obj
-          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py', 'build/ffmpeg/build.sh') }}-xcode26.6-v5
+          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py', 'build/ffmpeg/build.sh') }}-xcode26.6-v6
 
       - name: Verify fork runtime baseline
         run: |
