@@ -154,14 +154,9 @@ jobs:
       - name: Prepare pinned Wine sources
         run: |
           set -euo pipefail
-          # The pinned Wine commit references this untracked PE-only .c file.
-          # Wine's makedep scans it during configure even though this workflow
-          # uses the already tracked PE DLLs. An empty sentinel lets header
-          # generation proceed; do not compile Wine's ARM64EC ntdll from it.
+          # Older Wine pins omitted this file; the WoW64 companion tracks it.
           missing=wine/dlls/ntdll/arm64ec_x64_export_iat.c
-          test ! -e "$missing"
-          grep -Fq '#include "arm64ec_x64_export_iat.c"' wine/dlls/ntdll/loader.c
-          printf '%s\n' '/* CI sentinel for Wine makedep; PE ntdll is not built here. */' > "$missing"
+          test -s "$missing"
           python3 tools/patch-build-sources.py wine wine
 
       - name: Restore Wine header and library prerequisites
@@ -265,6 +260,8 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
+          bash tools/build-wine-wow64-pe.sh
+          bash tools/build-fex-windows.sh
           # Directory names are not Wine build targets: make can report
           # "Nothing to be done" while the architecture archives are absent.
           # DXMT links against these exact ARM64EC CRT and import archives.
@@ -281,23 +278,33 @@ jobs:
           done
           python3 tools/patch-dxmt-metal.py research/dxmt
           ln -s ../../toolchains research/dxmt/toolchains
-          SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" \
-            meson setup research/dxmt/build-arm64ec research/dxmt \
-              --cross-file research/dxmt/build-arm64ec-win.txt \
-              --native-file research/dxmt/build-osx.txt \
-              -Dbuildtype=release \
-              -Dwine_build_path="$GITHUB_WORKSPACE/wine/build-arm64ec"
-          ninja -C research/dxmt/build-arm64ec \
-            src/d3d11/d3d11.dll src/dxgi/dxgi.dll \
-            src/winemetal/winemetal.dll src/d3d10/d3d10core.dll
-          python3 tools/verify-dxmt-command.py \
-            research/dxmt/build-arm64ec/src/dxmt/libdxmt.a.p/dxmt_command.metallib \
-            research/dxmt/build-arm64ec/src/d3d11/d3d11.dll
-          for name in d3d11 dxgi winemetal d3d10core; do
-            source="$(find research/dxmt/build-arm64ec/src -maxdepth 2 -name "$name.dll" -print -quit)"
-            test -n "$source" && test -s "$source"
-            cp "$source" "app/Madeira/arm64ec-windows/$name.dll"
+          for arch in arm64ec aarch64; do
+            SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" \
+              meson setup "research/dxmt/build-$arch" research/dxmt \
+                --cross-file "research/dxmt/build-$arch-win.txt" \
+                --native-file research/dxmt/build-osx.txt \
+                -Dbuildtype=release \
+                -Dwine_build_path="$GITHUB_WORKSPACE/wine/build-$arch"
+            ninja -C "research/dxmt/build-$arch" \
+              src/d3d11/d3d11.dll src/dxgi/dxgi.dll \
+              src/winemetal/winemetal.dll src/d3d10/d3d10core.dll \
+              src/d3d9/d3d9.dll
+            for name in d3d11 dxgi winemetal d3d10core d3d9; do
+              source="$(find "research/dxmt/build-$arch/src" -maxdepth 2 -name "$name.dll" -print -quit)"
+              test -n "$source" && test -s "$source"
+              cp "$source" "app/Madeira/$arch-windows/$name.dll"
+            done
           done
+
+      - name: Build i386 Wine and DXMT farm
+        run: |
+          set -euo pipefail
+          bash build/wine-i386/build.sh
+          test -s app/Madeira/i386-windows/ntdll.dll
+          test -s app/Madeira/i386-windows/d3d9.dll
+          test -s app/Madeira/i386-windows/d3d9-emulated.dll
+          bash build/x86-tests/build.sh
+          bash build/x86-tests/build-d3d9-cube.sh
 
       - name: Build Wine iOS static libraries
         if: steps.native-cache.outputs.cache-hit != 'true'

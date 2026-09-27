@@ -58,6 +58,25 @@ def main() -> int:
     ).decode().split("\0")
     expected = [pathlib.Path(p) for p in tracked if p and pathlib.Path(p).suffix.lower() in (".dll", ".exe")]
     expected.extend(pathlib.Path("app/Madeira/x86_64-vcruntime") / name for name in VCRUNTIME_NAMES)
+    i386_dir = pathlib.Path("app/Madeira/i386-windows")
+    i386 = sorted(p for p in (ROOT / i386_dir).iterdir()
+                  if p.is_file() and p.suffix.lower() in (".dll", ".exe"))
+    if len(i386) < 500:
+        raise SystemExit(f"i386 runtime inventory unexpectedly small: {len(i386)} files")
+    required_i386 = {"ntdll.dll", "kernel32.dll", "user32.dll", "d3d9.dll",
+                     "d3d9-emulated.dll", "d3d9shim.dll", "hello-x86.exe",
+                     "d3d9-cube-x86.exe"}
+    missing_i386 = required_i386 - {p.name.lower() for p in i386}
+    if missing_i386:
+        raise SystemExit(f"Missing required i386 files: {sorted(missing_i386)}")
+    expected.extend(p.relative_to(ROOT) for p in i386)
+    required_native_pe = (
+        "aarch64-windows/ntdll.dll", "aarch64-windows/wow64.dll",
+        "aarch64-windows/wow64win.dll", "aarch64-windows/xtajit.dll",
+        "arm64ec-windows/ntdll.dll", "arm64ec-windows/xtajit64.dll",
+    )
+    expected.extend(pathlib.Path("app/Madeira") / name for name in required_native_pe
+                    if pathlib.Path("app/Madeira", name) not in expected)
     if len(expected) < 250:
         raise SystemExit(f"Runtime inventory unexpectedly small: {len(expected)} files")
 
@@ -88,7 +107,10 @@ def main() -> int:
                 raise SystemExit(f"Bundled runtime differs from source: {bundled}")
             folder = source.parts[2]
             machine = pe_machine(data)
-            want = 0xAA64 if folder == "aarch64-windows" else 0x8664
+            want = {"aarch64-windows": 0xAA64, "arm64ec-windows": 0x8664,
+                    "i386-windows": 0x14C}.get(folder)
+            if want is None:
+                raise SystemExit(f"Unexpected PE folder: {folder}")
             if machine != want:
                 raise SystemExit(f"Wrong PE machine in {bundled}: {machine:#x}")
         for name in ("prefix-template.tar.gz", "cacert.pem", "d3d12/libmetalirconverter.dylib"):
