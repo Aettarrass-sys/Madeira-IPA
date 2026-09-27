@@ -158,6 +158,11 @@ jobs:
           missing=wine/dlls/ntdll/arm64ec_x64_export_iat.c
           test -s "$missing"
           grep -Fq '#include "config.h"   /* makedep requires it first */' wine/dlls/ntdll/unix/sync.c
+          # Wine's makedep resolves quoted includes while generating Makefiles.
+          # These iOS-only headers live in Madeira, outside the Wine submodule.
+          for shim in build/ntdll-unix/shims/ios_*.h; do
+            ln -s "$GITHUB_WORKSPACE/$shim" "wine/dlls/ntdll/unix/$(basename "$shim")"
+          done
 
       - name: Restore Wine header and library prerequisites
         id: wine-prereq-cache
