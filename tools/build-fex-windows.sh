@@ -12,6 +12,8 @@ for spec in 'aarch64 wow64fex aarch64-windows xtajit.dll' \
         -DCMAKE_TOOLCHAIN_FILE="$root/FEX/Data/CMake/toolchain_mingw.cmake" \
         -DMINGW_TRIPLE="$arch-w64-mingw32" \
         -DFEX_IOS_HOST_BUILD=ON -DENABLE_LTO=OFF -DENABLE_CCACHE=OFF \
+        -DCMAKE_C_FLAGS=-DFEX_IOS_HOST=1 \
+        -DCMAKE_CXX_FLAGS=-DFEX_IOS_HOST=1 \
         -DENABLE_ASSERTIONS=OFF -DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF \
         -DBUILD_FEXCONFIG=OFF -DTUNE_ARCH=generic -DTUNE_CPU=none
     cmake --build "$build" --target "$target" --parallel "$(sysctl -n hw.ncpu)"
