@@ -17,9 +17,9 @@ def patch_fex(root: Path) -> None:
     replace_once(allocator,
                  '''size_t malloc_usable_size(void* ptr) {
   IOS_RPM_GUARD();
-#ifdef __APPLE__''',
+  return ::rpmalloc_usable_size(ptr);''',
                  '''size_t malloc_usable_size(void* ptr) {
-#ifdef __APPLE__''')
+  return ::rpmalloc_usable_size(ptr);''')
     arch = root / "FEXCore/Source/Utils/ArchHelpers/Arm64.cpp"
     old = '''  MEMORY_BASIC_INFORMATION mbi {};
   const char* type = "?";
