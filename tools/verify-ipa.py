@@ -93,6 +93,11 @@ def main() -> int:
         ):
             if code_name not in names or not has_macho_signature(archive.read(code_name)):
                 raise SystemExit(f"Missing Mach-O code signature: {code_name}")
+        app_code = archive.read("Payload/Madeira.app/Madeira.debug.dylib")
+        for marker in (b"[ptde-zero-layout]", b"[buffer-to-texture-bounds]",
+                       b"[wow-reserve] RECOVERED"):
+            if marker not in app_code:
+                raise SystemExit(f"Packaged app lacks runtime fix: {marker.decode()}")
         info = plistlib.loads(archive.read(info_name))
         if info.get("CFBundleIdentifier") != args.bundle_id:
             raise SystemExit(f"Wrong Bundle ID: {info.get('CFBundleIdentifier')}")
@@ -113,6 +118,9 @@ def main() -> int:
                 raise SystemExit(f"Unexpected PE folder: {folder}")
             if machine != want:
                 raise SystemExit(f"Wrong PE machine in {bundled}: {machine:#x}")
+            if source.as_posix() == "app/Madeira/aarch64-windows/xtajit.dll":
+                if b"[wow64-crt] ran skipped constructors" not in data:
+                    raise SystemExit("Packaged xtajit.dll lacks the WoW64 constructor repair")
         for name in ("prefix-template.tar.gz", "cacert.pem", "d3d12/libmetalirconverter.dylib"):
             bundled = "Payload/Madeira.app/" + name
             if bundled not in names:

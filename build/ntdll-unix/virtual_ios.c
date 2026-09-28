@@ -15685,6 +15685,7 @@ static void *map_reserved_area_inner( void *limit_low, void *limit_high, size_t 
                                       int unix_prot, size_t align_mask )
 {
     void *ptr = NULL;
+    void *selected_end = NULL;
     struct reserved_area *area;
     /* iOS-Madeira ml520: time the aligned VA reservation.
      *
@@ -15717,7 +15718,7 @@ static void *map_reserved_area_inner( void *limit_low, void *limit_high, size_t 
             if (start < limit_low) start = (void *)ROUND_SIZE( 0, limit_low, host_page_mask );
             if (end > limit_high) end = ROUND_ADDR( limit_high, host_page_mask );
             ptr = find_reserved_free_area_outside_preloader( start, end, size, top_down, align_mask );
-            if (ptr) break;
+            if (ptr) { selected_end = end; break; }
         }
     }
     else
@@ -15734,10 +15735,45 @@ static void *map_reserved_area_inner( void *limit_low, void *limit_high, size_t 
             if (start < limit_low) start = (void *)ROUND_SIZE( 0, limit_low, host_page_mask );
             if (end > limit_high) end = ROUND_ADDR( limit_high, host_page_mask );
             ptr = find_reserved_free_area_outside_preloader( start, end, size, top_down, align_mask );
-            if (ptr) break;
+            if (ptr) { selected_end = end; break; }
         }
     }
-    if (ptr && anon_mmap_fixed( ptr, size, unix_prot, 0 ) != ptr) ptr = NULL;
+    if (ptr && anon_mmap_fixed( ptr, size, unix_prot, 0 ) != ptr)
+    {
+#ifdef WINE_IOS
+        int map_errno = errno;
+        /* iOS can refuse one Wine-free address after a section was released.
+         * Search only the same WoW64 reserved area, and only after ENOMEM. */
+        if (map_errno == ENOMEM && !top_down && selected_end && ios_wow_base() &&
+            (ULONG_PTR)limit_low >= ios_wow_base() &&
+            (ULONG_PTR)limit_low < ios_wow_base() + IOS_WOW_WINDOW_SIZE)
+        {
+            void *next = ptr;
+            unsigned retry;
+            for (retry = 0; retry < 16 &&
+                 (char *)next + align_mask + 1 < (char *)selected_end; retry++)
+            {
+                next = find_reserved_free_area_outside_preloader(
+                    (char *)next + align_mask + 1, selected_end, size, top_down, align_mask );
+                if (!next) break;
+                if (anon_mmap_fixed( next, size, unix_prot, 0 ) == next)
+                {
+                    static unsigned recovered;
+                    if (recovered++ < 32)
+                        dprintf( 2, "[wow-reserve] RECOVERED first=%p next=%p size=%p retries=%u\n",
+                                 ptr, next, (void *)size, retry + 1 );
+                    ptr = next;
+                    break;
+                }
+            }
+            if (retry == 16 || !next) ptr = NULL;
+            else if (ptr != next) ptr = NULL;
+        }
+        else ptr = NULL;
+#else
+        ptr = NULL;
+#endif
+    }
     return ptr;
 }
 

@@ -34,6 +34,17 @@ jobs:
           git -C FEX submodule update --init --recursive
           git -C research/dxmt submodule update --init --recursive
 
+      - name: Apply pinned WoW64 and BC texture fixes
+        run: |
+          set -euo pipefail
+          python3 tools/patch-fex-wow64-constructors.py FEX
+          python3 tools/patch-dxmt-ptde.py research/dxmt
+          git -C FEX diff --check
+          git -C research/dxmt diff --check
+          grep -Fq '[wow64-crt] ran skipped constructors' FEX/Source/Windows/Common/CRT/CRT_iOS.cpp
+          grep -Fq '[ptde-zero-layout]' research/dxmt/src/dxmt/dxmt_resource_initializer.cpp
+          grep -Fq '[buffer-to-texture-bounds]' research/dxmt/src/winemetal/unix/winemetal_unix.c
+
       - name: Select Xcode 26.6 and install host tools
         run: |
           set -euo pipefail

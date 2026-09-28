@@ -19,6 +19,17 @@ for spec in 'aarch64 wow64fex aarch64-windows xtajit.dll' \
     cmake --build "$build" --target "$target" --parallel "$(sysctl -n hw.ncpu)"
     source="$build/Bin/lib$target.dll"
     test -s "$source"
+    if [ "$output" = xtajit.dll ]; then
+        python3 - "$source" <<'PY'
+import pathlib, struct, sys
+data = pathlib.Path(sys.argv[1]).read_bytes()
+pe = struct.unpack_from('<I', data, 0x3c)[0]
+assert data[pe:pe+4] == b'PE\0\0'
+assert struct.unpack_from('<H', data, pe+4)[0] == 0xaa64
+assert b'[wow64-crt] ran skipped constructors' in data, 'WoW64 constructor repair missing from xtajit.dll'
+print('Verified WoW64 constructor repair in rebuilt xtajit.dll')
+PY
+    fi
     cp "$source" "$root/app/Madeira/$folder/$output"
     echo "Installed $folder/$output from $source"
 done
