@@ -264,11 +264,12 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/patch-build-sources.py fex FEX
+          python3 tools/patch-fex-ios-probes.py
           cmake -S FEX -B FEX/build-ios -G Ninja \
             -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_SYSTEM_PROCESSOR=arm64 \
             -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=18.0 -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS='-DFEX_IOS_HOST=1' -DCMAKE_CXX_FLAGS='-DFEX_IOS_HOST=1' \
+            -DCMAKE_C_FLAGS= -DCMAKE_CXX_FLAGS= \
             -DBUILD_TESTING=OFF -DBUILD_FEX_LINUX_TESTS=OFF -DBUILD_THUNKS=OFF \
             -DBUILD_FEXCONFIG=OFF -DBUILD_STEAM_SUPPORT=OFF -DENABLE_LTO=OFF \
             -DENABLE_CCACHE=OFF -DENABLE_FEX_ALLOCATOR=OFF \

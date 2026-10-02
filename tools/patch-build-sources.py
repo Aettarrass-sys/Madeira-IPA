@@ -20,25 +20,6 @@ def patch_fex(root: Path) -> None:
   return ::rpmalloc_usable_size(ptr);''',
                  '''size_t malloc_usable_size(void* ptr) {
   return ::rpmalloc_usable_size(ptr);''')
-    arch = root / "FEXCore/Source/Utils/ArchHelpers/Arm64.cpp"
-    old = '''  MEMORY_BASIC_INFORMATION mbi {};
-  const char* type = "?";
-  if (VirtualQuery(reinterpret_cast<LPCVOID>(GPRs[AddressReg]), &mbi, sizeof(mbi))) {
-    type = mbi.Type == MEM_IMAGE ? "MEM_IMAGE" : mbi.Type == MEM_MAPPED ? "MEM_MAPPED" : "MEM_PRIVATE";
-  }
-  LogMan::Msg::EFmt("[caspal128] MISALIGNED-UNSUPPORTED Size={} addrReg=x{} addr={:#x} misalign={} "
-                    "crosses16B={} | region base={} size={:#x} prot={:#x} type={} state={:#x}",
-                    Size, AddressReg, GPRs[AddressReg], GPRs[AddressReg] & 15,
-                    (GPRs[AddressReg] & 15) ? "yes" : "no", mbi.BaseAddress, mbi.RegionSize,
-                    mbi.Protect, type, mbi.State);'''
-    new = '''#ifdef FEX_IOS_HOST
-  LogMan::Msg::EFmt("[caspal128] MISALIGNED-UNSUPPORTED Size={} addrReg=x{} addr={:#x} misalign={} crosses16B={}",
-                    Size, AddressReg, GPRs[AddressReg], GPRs[AddressReg] & 15,
-                    (GPRs[AddressReg] & 15) ? "yes" : "no");
-#else
-''' + old + '''
-#endif'''
-    replace_once(arch, old, new)
     linker = root / "Data/CMake/LinkerGC.cmake"
     replace_once(linker, 'if (CMAKE_BUILD_TYPE MATCHES "RELEASE")',
                  'if (CMAKE_BUILD_TYPE MATCHES "RELEASE" AND NOT APPLE)')

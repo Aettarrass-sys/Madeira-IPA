@@ -65,6 +65,10 @@ checkout; no unpublished Wine gitlink is needed.
 - Rebuild the patched ARM64EC PE `ntdll.dll`, strip it and pad to
   `SizeOfImage + 0x50000`, then stage it into the app DLL farm.
 - Rebuild ntdll/win32u/wineserver, FEX and DXMT native static libraries.
+- Native FEX uses the official system-allocator configuration without the
+  Windows-module `FEX_IOS_HOST` flag. The existing BCD portability helper
+  guards Windows-only diagnostic probes and provides a no-snapshot fallback
+  when rpmalloc is absent. Windows FEX PE DLLs retain their release binaries.
 - Keep the unchanged, matched official FEX/DXMT PE binaries for 64-bit.
 - Build the i386 runtime farm and its DXMT DLLs for the official WoW64 path.
 - Build FFmpeg before compiling the native media backend.
