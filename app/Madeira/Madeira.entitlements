@@ -8,5 +8,7 @@
 	<true/>
 	<key>get-task-allow</key>
 	<true/>
+	<key>com.apple.developer.kernel.extended-virtual-addressing</key>
+	<true/>
 </dict>
 </plist>

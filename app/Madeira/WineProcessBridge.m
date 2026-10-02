@@ -402,6 +402,13 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
         madeira_repair_profile( prefix );
         /* ml581: see madeira_undo_appdata_skeleton() above. */
         madeira_undo_appdata_skeleton( prefix );
+        /* DSR uses the mobile profile on some installs; retain all existing files. */
+        for (NSString *user in @[ @"mobile", @"madeira" ])
+            for (NSString *leaf in @[ @"AppData/Local", @"AppData/LocalLow", @"AppData/Roaming", @"Documents" ])
+                [fm createDirectoryAtPath:[[prefix stringByAppendingPathComponent:
+                    [@"drive_c/users" stringByAppendingPathComponent:user]] stringByAppendingPathComponent:leaf]
+                    withIntermediateDirectories:YES attributes:nil error:nil];
+
     }
 }
 
@@ -1069,6 +1076,14 @@ static void *wine_process_thread(void *arg) {
                     fprintf(stderr, "[madeira-env] sync engine: fastsync (default), MADEIRA_FASTSYNC=auto\n");
                 }
             }
+        }
+
+        /* cfg opt-in controls the same native diagnostic switch as the UI.
+         * Neither disabled logging nor an absent flag changes runtime fixes. */
+        {
+            extern void madeira_set_diag_enabled(int on);
+            const char *diag = getenv("MADEIRA_DIAG");
+            if (diag) madeira_set_diag_enabled(!strcmp(diag, "1"));
         }
 
         // Steam S0: root CA trust. iOS has no API to enumerate system

@@ -1,0 +1,20 @@
+diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
+index 39425a5c9ab..de9aa4f76eb 100644
+--- a/dlls/ntdll/signal_arm64ec.c
++++ b/dlls/ntdll/signal_arm64ec.c
+@@ -2224,6 +2224,15 @@ NTSTATUS SYSCALL_API NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SI
+             else if (pNotifyMemoryProtect
+                      && !ios_bulk_protect_suppressed( "cur-post", *addr_ptr, *size_ptr, new_prot ))
+                 pNotifyMemoryProtect( *addr_ptr, *size_ptr, new_prot, TRUE, st );
++            /* ml1136 ROOT-CAUSE FIX: this early return skipped leave_syscall_callback(), so
++             * InSyscallCallback stayed set after every logged exec request. Every later
++             * NtProtect/NtAllocate/NtFree/NtMapViewOfSection on the thread then took the
++             * enter_syscall_callback() bypass and never reached FEX. Seen on DSR: map-gate
++             * insc_before=0 right before [exec-req] #1, insc_before=1 right after; after
++             * [exec-req] #5 the guest's PAGE_EXECUTE_READWRITE on .tls..end reached Wine
++             * (VirtualQuery protect=0x80) but not FEX (no "Add SMC interval", xquery MISS),
++             * and the first branch into it decoded as NOEXEC -> c0000005 at 0x141e5e7cd. */
++            leave_syscall_callback();
+             return st;
+         }
+     }

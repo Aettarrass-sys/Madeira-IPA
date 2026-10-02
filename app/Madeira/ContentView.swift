@@ -80,6 +80,56 @@ final class MetalHostView: UIView {
 }
 
 // SwiftUI-hosted placeholder: geometry + touch input only.
+/// ml2030: touches on the game view (outside on-screen controls) normally
+/// reach the game as a mouse/touch pointer. Some games (Dark Souls Remastered)
+/// switch to keyboard+mouse prompts on any mouse event and then ignore the
+/// controller. MADEIRA_TOUCH_MOUSE (madeira.cfg env.NAME, else the process
+/// environment): "1" = always send (old behaviour), "0" = never send,
+/// unset/other = auto: suppressed while the landscape overlay shows at least
+/// one controller (pad) mapping. Hardware mouse/trackpad is not affected.
+@MainActor enum TouchMouseGate {
+    private static var diagnostics: Bool {
+        madeira_get_diag_enabled() != 0 || (MadeiraConfig.get("env.MADEIRA_DIAG") ?? ProcessInfo.processInfo.environment["MADEIRA_DIAG"]) == "1"
+    }
+    enum Mode: String { case auto, on, off }
+    static let mode: Mode = {
+        let v = MadeiraConfig.get("env.MADEIRA_TOUCH_MOUSE")
+            ?? ProcessInfo.processInfo.environment["MADEIRA_TOUCH_MOUSE"]
+        let m: Mode = v == "1" ? .on : (v == "0" ? .off : .auto)
+        if diagnostics { fputs("[touch-mouse] ml2030 mode=\(m.rawValue) raw=\(v ?? "unset")\n", stderr) }
+        return m
+    }()
+    /// Set by TouchControlsOverlay.configureGamepad: landscape overlay visible,
+    /// not editing, with at least one pad mapping.
+    static var padOverlay = false {
+        didSet {
+            if padOverlay != oldValue {
+                if diagnostics { fputs("[touch-mouse] ml2030 pad-overlay=\(padOverlay ? 1 : 0) mode=\(mode.rawValue)\n", stderr) }
+            }
+        }
+    }
+    static var suppressing: Bool {
+        switch mode {
+        case .on: return false
+        case .off: return true
+        case .auto: return padOverlay
+        }
+    }
+    private static var suppressed = 0
+    private static var reportPending = false
+    /// Counts one suppressed touch-down; logs the total at most once per 10 s.
+    static func noteSuppressed(_ n: Int) {
+        guard diagnostics else { return }
+        suppressed += n
+        guard !reportPending else { return }
+        reportPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+            reportPending = false
+            if diagnostics { fputs("[touch-mouse] ml2030 suppressed=\(suppressed)\n", stderr) }
+        }
+    }
+}
+
 final class MetalBackedView: UIView {
     private static var layerRegistered = false
 
@@ -503,8 +553,34 @@ final class MetalBackedView: UIView {
         (event?.allTouches ?? []).filter { $0.phase != .ended && $0.phase != .cancelled }
     }
 
+    // ml2030: direct touches that began while TouchMouseGate was suppressing
+    // stay swallowed until they lift, so a gate flip never leaves a button held.
+    private var tmgSwallowed: Set<ObjectIdentifier> = []
+    /// Returns the touches that should still be handled (nil = nothing left).
+    private func tmgFilter(_ touches: Set<UITouch>, _ phase: UITouch.Phase) -> Set<UITouch>? {
+        if phase == .began {
+            _ = TouchMouseGate.mode   // logs the mode once
+            guard TouchMouseGate.suppressing else { return touches }
+            let direct = touches.filter { $0.type == .direct }
+            guard !direct.isEmpty else { return touches }
+            for t in direct { tmgSwallowed.insert(ObjectIdentifier(t)) }
+            TouchMouseGate.noteSuppressed(direct.count)
+            let rest = touches.subtracting(direct)
+            return rest.isEmpty ? nil : rest
+        }
+        guard !tmgSwallowed.isEmpty else { return touches }
+        let mine = touches.filter { tmgSwallowed.contains(ObjectIdentifier($0)) }
+        guard !mine.isEmpty else { return touches }
+        if phase == .ended || phase == .cancelled {
+            for t in mine { tmgSwallowed.remove(ObjectIdentifier(t)) }
+        }
+        let rest = touches.subtracting(mine)
+        return rest.isEmpty ? nil : rest
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         if HardwareInput.shared.interceptTouches(touches, event, .began) { return }
+        guard let touches = tmgFilter(touches, .began) else { return }
         if touchPointerMode { touchModeBegan(touches); return }
         guard desktopMode else {
             guard let t = touches.first else { return }
@@ -551,6 +627,7 @@ final class MetalBackedView: UIView {
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         if HardwareInput.shared.interceptTouches(touches, event, .moved) { return }
+        guard let touches = tmgFilter(touches, .moved) else { return }
         if touchPointerMode { touchModeMoved(touches, event); return }
         guard desktopMode else {
             guard let t = touches.first else { return }
@@ -632,6 +709,7 @@ final class MetalBackedView: UIView {
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         if HardwareInput.shared.interceptTouches(touches, event, .ended) { return }
+        guard let touches = tmgFilter(touches, .ended) else { return }
         if touchPointerMode { touchModeEnded(touches, event); return }
         guard desktopMode else {
             guard let t = touches.first else { return }
@@ -675,6 +753,7 @@ final class MetalBackedView: UIView {
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         if HardwareInput.shared.interceptTouches(touches, event, .cancelled) { return }
+        guard let touches = tmgFilter(touches, .cancelled) else { return }
         if touchPointerMode { touchModeCancelled(touches); return }
         guard desktopMode else {
             guard let t = touches.first else { return }
@@ -3578,7 +3657,7 @@ struct TouchControlsOverlay: View {
             .onChange(of: m.visible) { _, _ in configureGamepad(landscape: landscape) }
             .onChange(of: m.editing) { _, _ in configureGamepad(landscape: landscape) }
             .onChange(of: library.blocksGameplayTouch) { _, _ in configureGamepad(landscape: landscape) }
-            .onDisappear { GamepadInput.shared.configureTouch(controls: []) }
+            .onDisappear { GamepadInput.shared.configureTouch(controls: []); TouchMouseGate.padOverlay = false }
         }
         .ignoresSafeArea()
     }
@@ -3609,6 +3688,7 @@ struct TouchControlsOverlay: View {
         let ids = landscape && m.visible && !m.editing && !library.blocksGameplayTouch
             ? m.controls.filter { $0.action.padName.map(TouchPadAction.supported) ?? false }.map(\.id) : []
         GamepadInput.shared.configureTouch(controls: Set(ids))
+        TouchMouseGate.padOverlay = !ids.isEmpty   // ml2030
     }
 
     /// ml1970: with MADEIRA_CONTROLS_XBOX_DEFAULT=1, a user with no controls file gets the built-in controller

@@ -1,0 +1,142 @@
+diff --git a/build/win32u-unix/driver_ios.c b/build/win32u-unix/driver_ios.c
+index 9321738..bce6c3d 100644
+--- a/build/win32u-unix/driver_ios.c
++++ b/build/win32u-unix/driver_ios.c
+@@ -2245,6 +2245,129 @@ static void ios_gamepad_diag( UINT index, int connected, const struct winios_gam
+                  pad->lx, pad->ly, pad->rx, pad->ry );
+ }
+ 
++/* ml2020: the game's window never becomes foreground on iOS.
++ *
++ * Nothing on this port activates a window: there is no window manager and
++ * no focus event, and the game's ShowWindow/SetWindowPos calls all arrive
++ * with SWP_NOACTIVATE ([win-pos] flags=0x3c/0x18/0x193f for the DARK SOULS
++ * window, never SWP_SHOWWINDOW without it). So GetForegroundWindow() is not
++ * the game's window, and a game that gates its input on
++ * "GetForegroundWindow() == my hwnd" (DSR does: dsr.exe 0x1401b7281 and
++ * 0x140c8fdb0 store exactly that comparison in a per-frame flag) reads the
++ * pad (XInputGetState returns the buttons) and then ignores it.
++ *
++ * Runs from the XInput poll, which the game drives continuously:
++ *   - once a second, logs (on change, else every 10 s) what the game would
++ *     see: foreground window, GetActiveWindow() of the polling thread, the
++ *     process's main window (largest top-level non-child window of this
++ *     process), and that window thread's active/focus windows;
++ *   - when the foreground window is not a window of this process (none, or
++ *     another process's), makes the main window foreground and active
++ *     (internal request: the server's foreground-stealing rule is for
++ *     applications, this stands in for the window manager). A dialog of the
++ *     game itself in front is left alone.
++ * MADEIRA_FOREGROUND_FIX=0 keeps the logging and disables the activation. */
++static HWND ios_main_window( DWORD pid )
++{
++    HWND *list, best = 0;
++    LONGLONG best_area = 0;
++    UINT dpi = get_thread_dpi();
++    int i;
++
++    if (!(list = list_window_children( 0 ))) return 0;
++    for (i = 0; list[i]; i++)
++    {
++        DWORD wpid = 0, style;
++        RECT r;
++        LONGLONG area;
++
++        if (!get_window_thread( list[i], &wpid ) || wpid != pid) continue;
++        style = get_window_long( list[i], GWL_STYLE );
++        if ((style & (WS_POPUP | WS_CHILD)) == WS_CHILD) continue;
++        if (!get_window_rect( list[i], &r, dpi )) continue;
++        if (r.right - r.left < 320 || r.bottom - r.top < 200) continue;
++        area = (LONGLONG)(r.right - r.left) * (r.bottom - r.top);
++        if (area > best_area) { best = list[i]; best_area = area; }
++    }
++    free( list );
++    return best;
++}
++
++static void ios_foreground_check(void)
++{
++    static pthread_mutex_t fg_lock = PTHREAD_MUTEX_INITIALIZER;
++    static DWORD last_pid;
++    static long long next_ns, last_log_ns;
++    static HWND last_fg, last_act, last_main, last_main_active, last_main_focus;
++    static int lines, fix = -1, tries;
++    DWORD pid = GetCurrentProcessId(), main_tid = 0, fg_pid = 0;
++    HWND fg, act, main_hwnd, main_active = 0, main_focus = 0, want = 0;
++    GUITHREADINFO gti;
++    struct timespec ts;
++    long long now;
++    int changed;
++
++    clock_gettime( CLOCK_MONOTONIC, &ts );
++    now = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
++    if (pthread_mutex_trylock( &fg_lock )) return;
++    if (pid != last_pid)
++    {
++        last_pid = pid; next_ns = 0; last_log_ns = 0; lines = 0; tries = 0;
++        last_fg = last_act = last_main = last_main_active = last_main_focus = (HWND)~(ULONG_PTR)0;
++    }
++    if (fix < 0)
++    {
++        const char *e = getenv( "MADEIRA_FOREGROUND_FIX" );
++        fix = !(e && e[0] == '0' && !e[1]);
++    }
++    if (now < next_ns) { pthread_mutex_unlock( &fg_lock ); return; }
++    next_ns = now + 1000000000LL;
++    pthread_mutex_unlock( &fg_lock );
++
++    fg = NtUserGetForegroundWindow();
++    act = get_active_window();
++    main_hwnd = ios_main_window( pid );
++    if (main_hwnd && (main_tid = get_window_thread( main_hwnd, NULL )))
++    {
++        memset( &gti, 0, sizeof(gti) );
++        gti.cbSize = sizeof(gti);
++        if (NtUserGetGUIThreadInfo( main_tid, &gti ))
++        {
++            main_active = gti.hwndActive;
++            main_focus = gti.hwndFocus;
++        }
++    }
++    if (fg) get_window_thread( fg, &fg_pid );
++    if (fix && main_hwnd && fg != main_hwnd && fg_pid != pid) want = main_hwnd;
++
++    pthread_mutex_lock( &fg_lock );
++    changed = fg != last_fg || act != last_act || main_hwnd != last_main ||
++              main_active != last_main_active || main_focus != last_main_focus;
++    if ((changed || now - last_log_ns >= 10000000000LL) && lines < 2000)
++    {
++        lines++;
++        last_log_ns = now;
++        dprintf( 2, "[fg] ml2020 pid=%04x tid=%04x fg=%p fg_pid=%04x active(self)=%p main=%p main_tid=%04x "
++                 "main_active=%p main_focus=%p style=%08x fg_is_main=%d%s\n",
++                 (unsigned)pid, (unsigned)GetCurrentThreadId(), fg, (unsigned)fg_pid, act, main_hwnd,
++                 (unsigned)main_tid, main_active, main_focus,
++                 main_hwnd ? (unsigned)get_window_long( main_hwnd, GWL_STYLE ) : 0u,
++                 main_hwnd && fg == main_hwnd, changed ? "" : " (heartbeat)" );
++    }
++    last_fg = fg; last_act = act; last_main = main_hwnd;
++    last_main_active = main_active; last_main_focus = main_focus;
++    if (want) tries++;
++    pthread_mutex_unlock( &fg_lock );
++
++    if (want)
++    {
++        BOOL ok = set_foreground_window( want, FALSE, TRUE );
++        if (tries <= 20 || tries % 60 == 0)
++            dprintf( 2, "[fg] ml2020 set_foreground hwnd=%p ok=%d fg_after=%p try=%d\n",
++                     want, ok, NtUserGetForegroundWindow(), tries );
++    }
++}
++
+ ULONG_PTR ios_gamepad_query( UINT index, UINT op, void *buffer )
+ {
+     struct winios_gamepad pad;
+@@ -2253,6 +2376,7 @@ ULONG_PTR ios_gamepad_query( UINT index, UINT op, void *buffer )
+     if (!buffer || index >= 4) return 0;
+     connected = winios_gamepad_get_state( index, &pad );
+     if (op == 0) ios_gamepad_diag( index, connected, &pad );
++    if (op == 0 && index == 0) ios_foreground_check();
+     if (!connected) return 0;
+ 
+     switch (op)
