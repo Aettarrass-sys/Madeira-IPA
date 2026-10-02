@@ -3,7 +3,8 @@
 ## Source and scope
 
 Branch: `codex/dsr-official-fixes` in `Aettarrass-sys/Madeira-IPA`.
-Base: official Madeira 0.1.0, `3ccbf9b8bc97f7a59727d10bb9e98717d2c91d64`.
+Base updated to official Madeira 0.1.1, `ca3183ea3dfb0fd706aff1bea2abb871b5d27aec`.
+Original base: 0.1.0, `3ccbf9b8bc97f7a59727d10bb9e98717d2c91d64`.
 Wine, FEX and DXMT gitlinks remain pinned to that release. This is separate
 from the BCD/PTDE branch. Bundle ID remains `com.willfaust.mythicemu`.
 Minimum iOS version: 26.0, matching the official converter/runtime baseline.
@@ -95,6 +96,7 @@ to Documents/madeira.cfg (keep the correct executable path for the device):
 
 ```ini
 env.MADEIRA_EXE_WIN_FLOOR_MB = 32
+env.MADEIRA_INSTALLED_PHYS_MB = 6144
 env.SteamAppId = 570940
 env.SteamGameId = 570940
 env.MADEIRA_PAD_EARLY_SLOT = 1
@@ -121,3 +123,25 @@ Optional compatibility switches:
 
 Use `env.` before each environment setting in madeira.cfg. This branch does
 not require replacing game DLLs or adding a new game mod.
+
+## Official 0.1.1 update and installed-memory gate
+
+Includes upstream optional Liquid Metal (off by default), JIT attachment and
+launch reporting fixes, small fixed-base executable support, shared section
+alignment handling, and profile/Steam error improvements. Runtime submodule
+pins remain unchanged. CI follows the renamed dxmt/ and tests/x86/ paths.
+The configurable executable floor is retained alongside the upstream
+relocations-stripped exception; profile fixes are combined.
+
+The exact tested DSR executable calls GetPhysicallyInstalledSystemMemory at
+0x14015c102, shifts the KB result right by 20 and compares against 6 at
+0x14015c115. This is a 6 GiB installed-memory gate. The previous run reported
+4095 MiB and displayed the fatal memory requirement dialog after D3D11 init.
+
+Patch 40 adds an opt-in MADEIRA_INSTALLED_PHYS_MB (6144 for DSR) only to that
+API. Absent, zero, malformed and out-of-range values use ordinary reporting.
+GlobalMemoryStatusEx, available memory and jetsam/allocation limits are not
+changed. Passing the startup gate does not establish gameplay stability.
+CI rebuilds ARM64EC kernelbase.dll after applying all Wine patches and checks
+that the packaged DLL equals the rebuilt module. docs/DSR-test.cfg is uploaded
+with the IPA. Fully restart the app after changing the config.

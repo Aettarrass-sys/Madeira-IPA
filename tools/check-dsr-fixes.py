@@ -65,7 +65,74 @@ with tempfile.TemporaryDirectory(prefix='dsr-test-', dir=ROOT) as td:
         subprocess.run([os.environ.get('CC','clang'),'-std=c11','-pthread',str(path/'test.c'),'-o',str(path/'test')],check=True)
         subprocess.run([str(path/'test')],check=True)
 
+# Compile the actual patched installed-memory API and test its fallback too.
+mem = (ROOT/'wine/dlls/kernelbase/memory.c').read_text(encoding='utf8')
+start = mem.index('static BOOL madeira_installed_memory_override(')
+end = mem.index('/***********************************************************************', start)
+api = mem[start:end]
+mem_program = r'''
+#include <stdint.h>
+#include <wchar.h>
+#include <assert.h>
+#include <string.h>
+typedef int BOOL;
+typedef uint64_t ULONGLONG;
+typedef wchar_t WCHAR;
+typedef unsigned DWORD;
+typedef struct { DWORD dwLength; ULONGLONG ullTotalPhys; } MEMORYSTATUSEX;
+#define TRUE 1
+#define FALSE 0
+#define WINAPI
+#define DECLSPEC_HOTPATCH
+#define ERROR_INVALID_PARAMETER 87
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
+#define TRACE(...) ((void)0)
+static const WCHAR *setting;
+static unsigned fallback_calls, last_error;
+static BOOL fallback_ok=TRUE;
+static void SetLastError(unsigned error) { last_error=error; }
+static DWORD GetEnvironmentVariableW(const WCHAR *name,WCHAR *out,DWORD capacity) {
+    assert(!wcscmp(name,L"MADEIRA_INSTALLED_PHYS_MB"));
+    if (!setting) return 0;
+    size_t n=wcslen(setting);
+    if(n>=capacity)return n+1;
+    memcpy(out,setting,(n+1)*sizeof(WCHAR)); return n;
+}
+static BOOL GlobalMemoryStatusEx(MEMORYSTATUSEX *s) {
+    ++fallback_calls; s->ullTotalPhys=4095ULL*1024*1024; return fallback_ok;
+}
+''' + api + r'''
+int main(void) {
+    ULONGLONG kb=0;
+    setting=L"6144";
+    assert(GetPhysicallyInstalledSystemMemory(&kb) && kb==6291456 && (kb>>20)==6);
+    assert(fallback_calls==0);
+    assert(!GetPhysicallyInstalledSystemMemory(0) && last_error==87);
+    const WCHAR *invalid[]={0,L"",L"0",L"-1",L"6144x",L"1048577",L"999999999999999999999999999999999999999"};
+    for(unsigned i=0;i<ARRAY_SIZE(invalid);++i) {
+        setting=invalid[i]; unsigned before=fallback_calls;
+        assert(GetPhysicallyInstalledSystemMemory(&kb));
+        assert(kb==4095ULL*1024 && fallback_calls==before+1);
+    }
+    setting=0;fallback_ok=FALSE;assert(!GetPhysicallyInstalledSystemMemory(&kb));
+    return 0;
+}
+'''
+with tempfile.TemporaryDirectory(prefix='dsr-memory-test-', dir=ROOT) as td:
+    path=Path(td); (path/'test.c').write_text(mem_program,encoding='utf8')
+    if os.name=='nt':
+        posix='/mnt/'+path.drive[0].lower()+path.as_posix()[2:]
+        subprocess.run(['wsl','gcc','-std=c11',posix+'/test.c','-o',posix+'/test'],check=True)
+        subprocess.run(['wsl',posix+'/test'],check=True)
+    else:
+        subprocess.run([os.environ.get('CC','clang'),'-std=c11',str(path/'test.c'),'-o',str(path/'test')],check=True)
+        subprocess.run([str(path/'test')],check=True)
+print('PASS: installed-memory 6 GiB gate, units, null/invalid/absent and API-failure fallbacks')
+
 workflow = (ROOT/'.github/workflows/build.yml').read_text(encoding='utf8')
 assert workflow.index('Apply published DSR Wine fixes') < workflow.index('Rebuild and stage the patched ARM64EC ntdll') < workflow.index('Build unsigned Debug app')
 assert '.github/patches/dsr-*.patch' in workflow
+assert 'dsr-{10,30,40}.patch' in workflow
+assert workflow.index('bash tools/build-dsr-kernelbase.sh') < workflow.index('Build unsigned Debug app')
+assert 'research/dxmt' not in workflow and 'build/x86-tests/' not in workflow
 print('PASS: logged truncated address, collision/bounds/ownership/unmap, recurring settings faults, real fault storm, build wiring')

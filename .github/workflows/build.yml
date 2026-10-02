@@ -30,12 +30,12 @@ jobs:
           git submodule sync
           git submodule update --init
           git -C FEX submodule update --init --recursive
-          git -C research/dxmt submodule update --init --recursive
+          git -C dxmt submodule update --init --recursive
 
       - name: Apply published DSR Wine fixes
         run: |
           set -euo pipefail
-          for patch in .github/patches/dsr-{10,30}.patch; do
+          for patch in .github/patches/dsr-{10,30,40}.patch; do
             git -C wine apply --check "$GITHUB_WORKSPACE/$patch"
             git -C wine apply "$GITHUB_WORKSPACE/$patch"
           done
@@ -59,13 +59,13 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD:FEX)" = "$(git -C FEX rev-parse HEAD)"
           test "$(git rev-parse HEAD:wine)" = "$(git -C wine rev-parse HEAD)"
-          test "$(git rev-parse HEAD:research/dxmt)" = "$(git -C research/dxmt rev-parse HEAD)"
+          test "$(git rev-parse HEAD:dxmt)" = "$(git -C dxmt rev-parse HEAD)"
           git submodule status --recursive
           (cd build/gnutls-ios/src && shasum -a 256 -c SHA256SUMS)
           shasum -a 256 app/Madeira/d3d12/libmetalirconverter.dylib \
             | grep '^073f903be98e973ff38f4d79f2c48d61ef938754a77b1caedda79c9f05a068c2 '
           bash tools/check-prefix-template.sh
-          key="$(printf '%s\n' 'macos-26-xcode-26.6-dsr-v1' "${{ hashFiles('build/**', 'tools/**', '.github/patches/**') }}" \
+          key="$(printf '%s\n' 'macos-26-xcode-26.6-dsr-v1' "${{ hashFiles('build/**', 'tools/**', '.github/patches/**', '.github/workflows/build.yml') }}" \
             "$(git submodule status --recursive)" | shasum -a 256 | cut -d' ' -f1)"
           echo "key=$key" >> "$GITHUB_OUTPUT"
           echo "wine=$(git rev-parse HEAD:wine)" >> "$GITHUB_OUTPUT"
@@ -224,12 +224,13 @@ jobs:
           set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
           bash build/wine-pe/build-ntdll.sh
+          bash tools/build-dsr-kernelbase.sh
           test -s app/Madeira/arm64ec-windows/ntdll.dll
           shasum -a 256 app/Madeira/arm64ec-windows/ntdll.dll
-          # Only ntdll PE sources changed. Retain the official matched DXMT/FEX
+          # Patched ntdll and kernelbase are rebuilt. Retain official matched DXMT/FEX
           # PE binaries, and rebuild the native side below.
-          python3 tools/patch-dxmt-metal.py research/dxmt
-          ln -s ../../toolchains research/dxmt/toolchains
+          python3 tools/patch-dxmt-metal.py dxmt
+          ln -s ../toolchains dxmt/toolchains
 
       - name: Prepare Metal compiler before DXMT PE builds
         run: |
@@ -246,8 +247,8 @@ jobs:
           test -s app/Madeira/i386-windows/ntdll.dll
           test -s app/Madeira/i386-windows/d3d9.dll
           test -s app/Madeira/i386-windows/d3d9-emulated.dll
-          bash build/x86-tests/build.sh
-          bash build/x86-tests/build-d3d9-cube.sh
+          bash tests/x86/build.sh
+          bash tests/x86/build-d3d9-cube.sh
 
       - name: Build Wine iOS static libraries
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -292,7 +293,7 @@ jobs:
           mkdir -p build/dxmt-ios/shader-headers
           for name in air_msad air_samplepos air_tessellation; do
             xcrun -sdk iphoneos metal -o "build/dxmt-ios/shader-headers/$name.air" \
-              -c "research/dxmt/src/airconv/shaders/$name.metal" \
+              -c "dxmt/src/airconv/shaders/$name.metal" \
               -std=metal3.1 --target=air64-apple-ios18.0
             xxd -n "$name" -i "build/dxmt-ios/shader-headers/$name.air" \
               "build/dxmt-ios/shader-headers/$name.h"
@@ -410,6 +411,7 @@ jobs:
             Madeira.ipa
             Madeira.ipa.sha256
             Madeira-build-manifest.txt
+            docs/DSR-test.cfg
           if-no-files-found: error
           retention-days: 14
 

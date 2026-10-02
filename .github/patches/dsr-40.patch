@@ -1,0 +1,49 @@
+diff --git a/dlls/kernelbase/memory.c b/dlls/kernelbase/memory.c
+index 1dd029169f5..9ba8cdca44e 100644
+--- a/dlls/kernelbase/memory.c
++++ b/dlls/kernelbase/memory.c
+@@ -1377,17 +1377,43 @@ BOOL WINAPI DECLSPEC_HOTPATCH FreeUserPhysicalPages( HANDLE process, ULONG_PTR *
+ /***********************************************************************
+  *             GetPhysicallyInstalledSystemMemory   (kernelbase.@)
+  */
++/* Optional installed-memory identity for games with a startup hardware gate.
++ * Does not change GlobalMemoryStatusEx, available memory or allocation limits. */
++static BOOL madeira_installed_memory_override( const WCHAR *value, ULONGLONG *memory )
++{
++    ULONGLONG mb = 0;
++    const WCHAR *p;
++    if (!value || !*value) return FALSE;
++    for (p = value; *p; ++p)
++    {
++        if (*p < '0' || *p > '9') return FALSE;
++        mb = mb * 10 + (*p - '0');
++        if (mb > 1048576) return FALSE; /* bounded before the next multiply */
++    }
++    if (!mb) return FALSE;
++    *memory = mb * 1024; /* API units are KB, not bytes */
++    return TRUE;
++}
++
+ BOOL WINAPI DECLSPEC_HOTPATCH GetPhysicallyInstalledSystemMemory( ULONGLONG *memory )
+ {
+     MEMORYSTATUSEX status;
++    WCHAR value[32];
++    DWORD length;
+ 
+     if (!memory)
+     {
+         SetLastError( ERROR_INVALID_PARAMETER );
+         return FALSE;
+     }
++    length = GetEnvironmentVariableW( L"MADEIRA_INSTALLED_PHYS_MB", value, ARRAY_SIZE(value) );
++    if (length && length < ARRAY_SIZE(value) && madeira_installed_memory_override( value, memory ))
++    {
++        TRACE( "Installed memory override: %I64u KB\n", *memory );
++        return TRUE;
++    }
+     status.dwLength = sizeof(status);
+-    GlobalMemoryStatusEx( &status );
++    if (!GlobalMemoryStatusEx( &status )) return FALSE;
+     *memory = status.ullTotalPhys / 1024;
+     return TRUE;
+ }

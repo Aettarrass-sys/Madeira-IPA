@@ -73,7 +73,7 @@ def main() -> int:
     required_native_pe = (
         "aarch64-windows/ntdll.dll", "aarch64-windows/wow64.dll",
         "aarch64-windows/wow64win.dll", "aarch64-windows/xtajit.dll",
-        "arm64ec-windows/ntdll.dll", "arm64ec-windows/xtajit64.dll",
+        "arm64ec-windows/ntdll.dll", "arm64ec-windows/kernelbase.dll", "arm64ec-windows/xtajit64.dll",
     )
     expected.extend(pathlib.Path("app/Madeira") / name for name in required_native_pe
                     if pathlib.Path("app/Madeira", name) not in expected)
@@ -113,6 +113,9 @@ def main() -> int:
                 raise SystemExit(f"Unexpected PE folder: {folder}")
             if machine != want:
                 raise SystemExit(f"Wrong PE machine in {bundled}: {machine:#x}")
+        kernelbase = archive.read("Payload/Madeira.app/arm64ec-windows/kernelbase.dll")
+        if "MADEIRA_INSTALLED_PHYS_MB".encode("utf-16le") not in kernelbase:
+            raise SystemExit("kernelbase.dll is missing the installed-memory override")
         for name in ("prefix-template.tar.gz", "cacert.pem", "d3d12/libmetalirconverter.dylib"):
             bundled = "Payload/Madeira.app/" + name
             if bundled not in names:
