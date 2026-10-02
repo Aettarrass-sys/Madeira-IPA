@@ -179,7 +179,7 @@ jobs:
             build/freetype-ios/build
             toolchains/gnutls-ios
             build/gnutls-ios/obj
-          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py', '.github/patches/dsr-*.patch') }}-xcode26.6-dsr-v1
+          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py', 'tools/build-wine-generated-headers.py', 'build/ntdll-unix/server_ios.c', '.github/patches/dsr-*.patch') }}-xcode26.6-dsr-v2
 
       - name: Build FFmpeg audio and media dependencies
         run: bash build/ffmpeg/build.sh
@@ -191,18 +191,9 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
           mkdir -p wine/build-arm64ec wine/build-macos
           (cd wine/build-arm64ec && ../configure --enable-archs=arm64ec --without-x --disable-tests --enable-winegstreamer)
-          # Wine's generated headers include their imported IDL headers. Build
-          # the complete dwrite/COM import chain with Wine's configured rules.
-          headers=(dcommon dwrite dwrite_1 dwrite_2 dwrite_3 dxgiformat \
-            oaidl objidl objidlbase oleidl propidl unknwn wtypes wtypesbase)
-          targets=()
-          for header in "${headers[@]}"; do
-            targets+=("include/$header.h")
-          done
-          make -C wine/build-arm64ec -j"$(sysctl -n hw.ncpu)" "${targets[@]}"
-          for header in "${headers[@]}"; do
-            test -s "wine/build-arm64ec/include/$header.h"
-          done
+          # Build all configured IDL header rules once, including media,
+          # COM and Direct3D dependencies needed by the native consumers.
+          python3 tools/build-wine-generated-headers.py wine/build-arm64ec
           (cd wine/build-macos && ../configure --without-x --without-freetype \
             CFLAGS='-arch arm64' LDFLAGS='-arch arm64')
           test -s wine/build-macos/include/config.h
@@ -212,48 +203,8 @@ jobs:
           git -C research/freetype checkout --detach FETCH_HEAD
           bash build/gnutls-ios/build.sh
           bash build/freetype-ios/build.sh
-          # Compile the consumer before caching headers. Wine's static headers
-          # can include further IDL-generated headers outside the import chain.
-          for attempt in {1..40}; do
-            if bash build/ntdll-unix/build.sh; then
-              break
-            fi
-            missing="$(sed -nE "s/.*fatal error: '([^']+\.h)' file not found.*/\1/p" \
-              build/ntdll-unix/obj/dwrite_unixlib.err | head -1)"
-            if [[ -z "$missing" || ! -f "wine/include/${missing%.h}.idl" || \
-                  -s "wine/build-arm64ec/include/$missing" ]]; then
-              echo "ntdll compilation failed without a new Wine IDL header to generate" >&2
-              exit 1
-            fi
-            echo "Generating Wine header required by dwrite: $missing"
-            make -C wine/build-arm64ec "include/$missing"
-            test -s "wine/build-arm64ec/include/$missing"
-            if (( attempt == 40 )); then
-              echo "Exceeded Wine header generation attempts" >&2
-              exit 1
-            fi
-          done
-          # win32u uses the same generated headers, but its own macOS config.
-          # Check that second consumer before this prerequisite cache is saved.
-          for attempt in {1..40}; do
-            if bash build/win32u-unix/build.sh; then
-              break
-            fi
-            missing="$(sed -nE "s/.*fatal error: '([^']+\.h)' file not found.*/\1/p" \
-              build/win32u-unix/obj/*.err | sort -u | sed -n '1p')"
-            if [[ -z "$missing" || ! -f "wine/include/${missing%.h}.idl" || \
-                  -s "wine/build-arm64ec/include/$missing" ]]; then
-              echo "win32u compilation failed without a new Wine IDL header to generate" >&2
-              exit 1
-            fi
-            echo "Generating Wine header required by win32u: $missing"
-            make -C wine/build-arm64ec "include/$missing"
-            test -s "wine/build-arm64ec/include/$missing"
-            if (( attempt == 40 )); then
-              echo "Exceeded Wine header generation attempts" >&2
-              exit 1
-            fi
-          done
+          bash build/ntdll-unix/build.sh
+          bash build/win32u-unix/build.sh
 
       - name: Save Wine header and library prerequisites
         if: steps.wine-prereq-cache.outputs.cache-hit != 'true'
@@ -266,7 +217,7 @@ jobs:
             build/freetype-ios/build
             toolchains/gnutls-ios
             build/gnutls-ios/obj
-          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py', '.github/patches/dsr-*.patch') }}-xcode26.6-dsr-v1
+          key: madeira-wine-prereq-${{ steps.source.outputs.wine }}-${{ env.FREETYPE_COMMIT }}-${{ hashFiles('build/ntdll-unix/build.sh', 'build/win32u-unix/build.sh', 'build/gnutls-ios/build.sh', 'build/gnutls-ios/src/SHA256SUMS', 'build/freetype-ios/build.sh', 'tools/patch-build-sources.py', 'tools/build-wine-generated-headers.py', 'build/ntdll-unix/server_ios.c', '.github/patches/dsr-*.patch') }}-xcode26.6-dsr-v2
 
       - name: Rebuild and stage the patched ARM64EC ntdll
         run: |
@@ -279,6 +230,14 @@ jobs:
           # PE binaries, and rebuild the native side below.
           python3 tools/patch-dxmt-metal.py research/dxmt
           ln -s ../../toolchains research/dxmt/toolchains
+
+      - name: Prepare Metal compiler before DXMT PE builds
+        run: |
+          set -euo pipefail
+          if ! xcodebuild -downloadComponent MetalToolchain; then
+            echo "MetalToolchain download returned a failure; checking the compiler directly"
+          fi
+          xcrun -sdk iphoneos --find metal
 
       - name: Build i386 Wine and DXMT farm
         run: |
@@ -329,10 +288,6 @@ jobs:
         if: steps.native-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          if ! xcodebuild -downloadComponent MetalToolchain; then
-            echo "MetalToolchain download returned a failure; checking the compiler directly"
-          fi
-          xcrun -sdk iphoneos --find metal
           mkdir -p build/dxmt-ios/shader-headers
           for name in air_msad air_samplepos air_tessellation; do
             xcrun -sdk iphoneos metal -o "build/dxmt-ios/shader-headers/$name.air" \

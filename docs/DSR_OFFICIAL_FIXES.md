@@ -68,6 +68,11 @@ checkout; no unpublished Wine gitlink is needed.
 - Keep the unchanged, matched official FEX/DXMT PE binaries for 64-bit.
 - Build the i386 runtime farm and its DXMT DLLs for the official WoW64 path.
 - Build FFmpeg before compiling the native media backend.
+- Generate Wine's complete configured header set upfront and expose it to
+  the native media backend; abort native archiving on any compilation failure.
+- The optional page-wait statistic is reported as `n/a` because the public
+  iPhoneOS SDK does not expose that field.
+- Prepare MetalToolchain before the first DXMT PE shader build.
 - Cache LLVM/toolchains and native outputs; native cache identity includes
   source/build helper content, Wine patches and recursive submodule pins.
 - Build Debug, ad hoc sign nested Mach-O files and the app with the checked-in
