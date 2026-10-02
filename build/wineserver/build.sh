@@ -26,6 +26,7 @@ CC_FLAGS=(
     -arch arm64 -isysroot "$SDK" -miphoneos-version-min=17.0 -O2
     -I"$WINE_SRC/include" -I"$WINE_SRC/include/wine"
     -I"$WINE_SRC/build-macos/include"
+    -I"$WINE_SRC/build-arm64ec/include"
     -I"$BUILD_DIR" -I"$WINE_SRC/server"
     -I"$SHIMS_DIR"
     -I"$BUILD_DIR/../madsync" -DHAVE_LINUX_NTSYNC_H=1

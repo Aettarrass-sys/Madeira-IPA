@@ -19,6 +19,7 @@ flags=(
   -arch arm64 -isysroot "$sdk" -miphoneos-version-min=18.0 -O2
   -I"$wine/include" -I"$wine/include/wine"
   -I"$wine/build-macos/include" -I"$wine/build-macos/server"
+  -I"$wine/build-arm64ec/include"
   -I"$ws" -I"$wine/server" -I"$root/build/ntdll-unix/shims"
   -I"$root/build/madsync" -DHAVE_LINUX_NTSYNC_H=1
   -include "$ws/config_ios.h" -include stdarg.h

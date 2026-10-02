@@ -28,7 +28,7 @@ compile_one() {
         -include "$BUILD_DIR/shims/wine_ios_exit.h" \
         -I"$BUILD_DIR/shims" -I"$BUILD_DIR/../madsync" -DHAVE_LINUX_NTSYNC_H=1 \
         -I"$WINE_BUILD/dlls/ntdll" -I"$WINE_SRC/dlls/ntdll" -I"$WINE_SRC/dlls/ntdll/unix" \
-        -I"$WINE_BUILD/include" -I"$WINE_SRC/include" \
+        -I"$WINE_BUILD/include" -I"$WINE_SRC/build-arm64ec/include" -I"$WINE_SRC/include" \
         -D__WINESRC__ -DLTC_NO_PROTOTYPES -DLTC_SOURCE -D_NTSYSTEM_ \
         -D_ACRTIMP= -DWINBASEAPI= \
         -DBINDIR=\"/usr/local/bin\" -DLIBDIR=\"/usr/local/lib\" \
@@ -65,7 +65,7 @@ compile_unixlib() {
         -include "$WINE_BUILD/include/config.h" \
         -include "$BUILD_DIR/shims/wine_ios_exit.h" \
         -I"$BUILD_DIR/shims" -I"$BUILD_DIR/../madsync" -DHAVE_LINUX_NTSYNC_H=1 \
-        -I"$WINE_BUILD/include" -I"$WINE_SRC/include" \
+        -I"$WINE_BUILD/include" -I"$WINE_SRC/build-arm64ec/include" -I"$WINE_SRC/include" \
         -D__WINESRC__ -D_NTSYSTEM_ -D_ACRTIMP= -DWINBASEAPI= \
         -DWINE_UNIX_LIB -DWINE_IOS=1 \
         -D__wine_unix_call_funcs=${prefix}_unix_call_funcs \

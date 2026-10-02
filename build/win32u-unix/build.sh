@@ -41,7 +41,7 @@ compile_one() {
         -I"$WINE_BUILD/include" \
         -I"$NTDLL_SHIMS" \
         -I"$WINE_BUILD/dlls/win32u" -I"$WINE_SRC/dlls/win32u" \
-        -I"$WINE_BUILD/include" -I"$WINE_SRC/include" \
+        -I"$WINE_BUILD/include" -I"$WINE_SRC/build-arm64ec/include" -I"$WINE_SRC/include" \
         -D__WINESRC__ -D_WIN32U_ \
         -D_ACRTIMP= -DWINBASEAPI= \
         -DSYSTEMDLLPATH=\"\" \
@@ -135,6 +135,10 @@ fi
 if [ $FAILED -gt 0 ]; then
     echo ""
     echo "(not linking — errors in $OBJ_DIR/<name>.err)"
+    for name in $FAILED_FILES; do
+        echo "=== $name compiler diagnostics ==="
+        cat "$OBJ_DIR/$name.err"
+    done
     exit 1
 fi
 

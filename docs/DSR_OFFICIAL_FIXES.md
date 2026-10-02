@@ -69,7 +69,8 @@ checkout; no unpublished Wine gitlink is needed.
 - Build the i386 runtime farm and its DXMT DLLs for the official WoW64 path.
 - Build FFmpeg before compiling the native media backend.
 - Generate Wine's complete configured header set upfront and expose it to
-  the native media backend; abort native archiving on any compilation failure.
+  every native Wine consumer (ntdll, win32u and both wineserver stages); abort
+  native archiving on any compilation failure.
 - The optional page-wait statistic is reported as `n/a` because the public
   iPhoneOS SDK does not expose that field.
 - Prepare MetalToolchain before the first DXMT PE shader build.
