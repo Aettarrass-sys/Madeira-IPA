@@ -145,3 +145,13 @@ changed. Passing the startup gate does not establish gameplay stability.
 CI rebuilds ARM64EC kernelbase.dll after applying all Wine patches and checks
 that the packaged DLL equals the rebuilt module. docs/DSR-test.cfg is uploaded
 with the IPA. Fully restart the app after changing the config.
+
+## Follow-up build path repair
+
+Run 37055851297 rebuilt the patched PE modules, i386 runtime, native Wine
+and FEX successfully, then failed compiling DXMT winemetal_unix.c. The pinned
+DXMT still used its old research/dxmt-relative config include. Its three
+remote-Metal includes would also fail after that; remote-metal remains under
+research/. The DXMT source preparation helper now repairs all four before
+compilation, and check-build-layout.py checks external includes, workflow
+script targets and Xcode source references at the start of every build.

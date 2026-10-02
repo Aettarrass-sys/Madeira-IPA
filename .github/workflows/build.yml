@@ -32,6 +32,13 @@ jobs:
           git -C FEX submodule update --init --recursive
           git -C dxmt submodule update --init --recursive
 
+      - name: Prepare and check DXMT source layout
+        run: |
+          set -euo pipefail
+          python3 tools/patch-dxmt-metal.py dxmt
+          ln -s ../toolchains dxmt/toolchains
+          python3 tools/check-build-layout.py
+
       - name: Apply published DSR Wine fixes
         run: |
           set -euo pipefail
@@ -229,8 +236,6 @@ jobs:
           shasum -a 256 app/Madeira/arm64ec-windows/ntdll.dll
           # Patched ntdll and kernelbase are rebuilt. Retain official matched DXMT/FEX
           # PE binaries, and rebuild the native side below.
-          python3 tools/patch-dxmt-metal.py dxmt
-          ln -s ../toolchains dxmt/toolchains
 
       - name: Prepare Metal compiler before DXMT PE builds
         run: |
