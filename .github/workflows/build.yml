@@ -36,8 +36,12 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/patch-dxmt-metal.py dxmt
+          git -C dxmt apply --check "$GITHUB_WORKSPACE/.github/patches/dxmt-staging-memory.patch"
+          git -C dxmt apply "$GITHUB_WORKSPACE/.github/patches/dxmt-staging-memory.patch"
+          git -C dxmt diff --check
           ln -s ../toolchains dxmt/toolchains
           python3 tools/check-build-layout.py
+          python3 tools/check-staging-memory.py
 
       - name: Apply published DSR Wine fixes
         run: |
@@ -234,8 +238,7 @@ jobs:
           bash tools/build-dsr-kernelbase.sh
           test -s app/Madeira/arm64ec-windows/ntdll.dll
           shasum -a 256 app/Madeira/arm64ec-windows/ntdll.dll
-          # Patched ntdll and kernelbase are rebuilt. Retain official matched DXMT/FEX
-          # PE binaries, and rebuild the native side below.
+          # DXMT's ARM64EC frontend is rebuilt after preparing Metal below.
 
       - name: Prepare Metal compiler before DXMT PE builds
         run: |
@@ -244,6 +247,11 @@ jobs:
             echo "MetalToolchain download returned a failure; checking the compiler directly"
           fi
           xcrun -sdk iphoneos --find metal
+
+      - name: Rebuild and stage memory-bounded ARM64EC DXMT
+        run: |
+          set -euo pipefail
+          bash tools/build-dsr-dxmt.sh
 
       - name: Build i386 Wine and DXMT farm
         run: |

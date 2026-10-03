@@ -1,0 +1,117 @@
+diff --git a/src/dxmt/dxmt_command_queue.cpp b/src/dxmt/dxmt_command_queue.cpp
+index ec52583..296dbf8 100644
+--- a/src/dxmt/dxmt_command_queue.cpp
++++ b/src/dxmt/dxmt_command_queue.cpp
+@@ -25,7 +25,7 @@ CommandQueue::CommandQueue(WMT::Device device) :
+     staging_allocator({
+         device, WMTResourceOptionCPUCacheModeWriteCombined | WMTResourceHazardTrackingModeUntracked |
+                     WMTResourceStorageModeManaged, false
+-    }),
++    }, false, 2),
+     copy_temp_allocator({device, WMTResourceHazardTrackingModeUntracked | WMTResourceStorageModePrivate}),
+     argbuf_allocator({
+         device,
+diff --git a/src/dxmt/dxmt_command_queue.hpp b/src/dxmt/dxmt_command_queue.hpp
+index 5436540..a04e43f 100644
+--- a/src/dxmt/dxmt_command_queue.hpp
++++ b/src/dxmt/dxmt_command_queue.hpp
+@@ -198,7 +198,7 @@ private:
+     return encoder_seq++;
+   }
+ 
+-  RingBumpState<StagingBufferBlockAllocator> staging_allocator;
++  RingBumpState<StagingBufferBlockAllocator, kBoundedStagingBlockSize> staging_allocator;
+   RingBumpState<GpuPrivateBufferBlockAllocator> copy_temp_allocator;
+   RingBumpState<StagingBufferBlockAllocator, kCommandChunkGPUHeapSize> argbuf_allocator;
+   RingBumpState<HostBufferBlockAllocator, kCommandChunkCPUHeapSize, dxmt::null_mutex> cpu_command_allocator;
+@@ -371,4 +371,4 @@ public:
+   void Retain(uint64_t seq, Allocation *allocation);
+ };
+ 
+-} // namespace dxmt
+\ No newline at end of file
++} // namespace dxmt
+diff --git a/src/dxmt/dxmt_resource_initializer.cpp b/src/dxmt/dxmt_resource_initializer.cpp
+index 94086ed..211bcb8 100644
+--- a/src/dxmt/dxmt_resource_initializer.cpp
++++ b/src/dxmt/dxmt_resource_initializer.cpp
+@@ -50,7 +50,7 @@ ResourceInitializer::ResourceInitializer(WMT::Device device) :
+     device_(device),
+     gpu_command_heap_allocator(StagingBufferBlockAllocator(
+         device, WMTResourceStorageModeManaged | WMTResourceHazardTrackingModeUntracked, false
+-    )) {
++    ), false, 2) {
+   upload_queue_ = device.newCommandQueue(kResourceInitializerChunks);
+   upload_queue_event_ = device.newSharedEvent();
+ 
+@@ -603,6 +603,7 @@ ResourceInitializer::flushToWait() {
+   std::lock_guard<dxmt::mutex> lock(mutex_);
+ 
+   if (idle()) {
++    cached_coherent_seq_id = upload_queue_event_.signaledValue();
+     gpu_command_heap_allocator.free_blocks(cached_coherent_seq_id);
+     if (cached_coherent_seq_id == current_seq_id_ - 1)
+       return 0;
+@@ -648,6 +649,10 @@ ResourceInitializer::encode(WMT::CommandBuffer cmdbuf) {
+ 
+ WMT::Buffer
+ ResourceInitializer::allocateGpuHeap(size_t size, size_t &offset) {
++  // Resource creation may continue for a long time between flushToWait calls.
++  // Refresh completion so finished uploads can be reused during loading.
++  cached_coherent_seq_id = upload_queue_event_.signaledValue();
++  gpu_command_heap_allocator.free_blocks(cached_coherent_seq_id);
+   auto [block, offset_] = gpu_command_heap_allocator.allocate(
+       current_seq_id_, cached_coherent_seq_id, size, kResourceInitializerGpuUploadHeapAlignment
+   );
+@@ -723,4 +728,4 @@ ResourceInitializer::allocateZeroBuffer(size_t size) {
+   return zero_buffer_;
+ }
+ 
+-} // namespace dxmt
+\ No newline at end of file
++} // namespace dxmt
+diff --git a/src/dxmt/dxmt_ring_bump_allocator.hpp b/src/dxmt/dxmt_ring_bump_allocator.hpp
+index 98b462e..79e2ba7 100644
+--- a/src/dxmt/dxmt_ring_bump_allocator.hpp
++++ b/src/dxmt/dxmt_ring_bump_allocator.hpp
+@@ -29,6 +29,9 @@ constexpr size_t kStagingBlockSize = 0x2000000; // 32MB
+ #endif
+ constexpr size_t kStagingBlockSizeForDeferredContext = 0x200000; // 2MB
+ constexpr size_t kStagingBlockLifetime = 300;
++// Immediate uploads can accumulate many otherwise idle 32 MB blocks during
++// loading. Use smaller blocks there; deferred lists retain their replay data.
++constexpr size_t kBoundedStagingBlockSize = 0x800000; // 8MB
+ 
+ // DXMT_RING_OVERSIZE_REUSE is a Madeira switch (util_madeira_switch.hpp): on
+ // by default only in the i386 build. Every 64-bit build keeps the upstream
+@@ -57,7 +60,9 @@ public:
+   // even where a device lock serialises them. free_blocks() and preallocate()
+   // stay outside the check, since they may run off the writer thread under
+   // mutex_.
+-  RingBumpState(Allocator &&allocator, bool single_writer = false) : allocator_(std::move(allocator)) {
++  RingBumpState(Allocator &&allocator, bool single_writer = false,
++                size_t completed_cache_blocks = size_t(-1)) :
++      completed_cache_blocks_(completed_cache_blocks), allocator_(std::move(allocator)) {
+ #ifdef DXMT_DEBUG
+     single_writer_ = single_writer;
+ #else
+@@ -151,6 +156,7 @@ private:
+   unsigned reusable_oversize_blocks_ = 0;
+   uint64_t oversize_reuses_ = 0;
+   mutex mutex_;
++  size_t completed_cache_blocks_;
+   Allocator allocator_;
+ };
+ 
+@@ -342,7 +348,10 @@ RingBumpState<Allocator, BlockSize, mutex>::free_blocks(uint64_t coherent_id) {
+     auto expired = (coherent_id - front.last_used_seq_id) > kStagingBlockLifetime ||
+                    front.inc_time_to_live > kStagingBlockLifetime || coherent_id == -1ull;
+     auto adhoc = front.total_size != BlockSize && !front.reusable_oversize;
+-    if (expired || adhoc) {
++    // Only GPU-completed blocks reach here. Bound the idle cache without
++    // imposing a cap on live GPU work or touching replayable command lists.
++    const bool excess_completed = fifo.size() > completed_cache_blocks_;
++    if (expired || adhoc || excess_completed) {
+       // can be deallocated
+       if (front.reusable_oversize) --reusable_oversize_blocks_;
+       fifo.pop();

@@ -155,3 +155,36 @@ remote-Metal includes would also fail after that; remote-metal remains under
 research/. The DXMT source preparation helper now repairs all four before
 compilation, and check-build-layout.py checks external includes, workflow
 script targets and Xcode source references at the start of every build.
+
+## DSR loading memory: completed upload cache
+
+The latest test ended at 4087 MB process footprint, with Metal at 2732 MB,
+private textures at 1419 MB and staging rings at 1252 MB (39 allocations,
+zero frees). Memory termination is suspected; no OS termination report was
+available. This change targets staging retention, not the game's memory gate.
+
+The immediate upload ring now uses 8 MB rather than 32 MB blocks, and retains
+at most two completed spare blocks. All blocks whose sequence is still ahead
+of the GPU completion watermark remain alive. This is an idle-cache bound,
+not a hard cap on total uploads: pending work may still exceed 16 MB.
+Resource initialization uses the same two-block spare policy and refreshes
+its own upload-event watermark before allocation and idle trimming. Deferred
+command lists remain unchanged because their upload data can be replayed.
+The generic allocator's existing policy remains the default for other users.
+
+The portable test compiles the production allocator in release and debug
+modes, including a 39-block loading burst, partial GPU completion, spare
+reuse, a partly used block extending into another chunk, deferred-list
+retention, and oversized uploads with oversize reuse both enabled and off.
+This validates allocator lifetime rules, not real-device rendering or savings.
+
+CI applies `.github/patches/dxmt-staging-memory.patch` to the public DXMT pin,
+then rebuilds and stages ARM64EC d3d11/dxgi/d3d10core/winemetal as well as the
+existing i386/native builds. The patch and helper participate in the existing
+cache identity. No additional diagnostics are enabled and no new cfg setting
+is required. Keep MADEIRA_INSTALLED_PHYS_MB=6144 for the installed-memory gate.
+
+For the next device run, keep the previous config for comparison and enable
+the existing optional diagnostics. Check loading progress, peak process
+footprint, staging-ring frees/live memory, texture memory, and any GPU errors.
+Texture downscaling is a separate follow-up if reclaiming staging is insufficient.
